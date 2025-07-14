@@ -1,0 +1,111 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model UserWallet {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  ethereumAddress String
+  ethereumPrivateKey String
+  ethereumDerivationPath String
+  ethereumQrCode String?
+  
+  bscAddress    String
+  bscPrivateKey String
+  bscDerivationPath String
+  bscQrCode     String?
+  
+  polygonAddress String
+  polygonPrivateKey String
+  polygonDerivationPath String
+  polygonQrCode String?
+  
+  solanaAddress String
+  solanaPrivateKey String
+  solanaDerivationPath String
+  solanaQrCode  String?
+  
+  tonAddress    String
+  tonPrivateKey String
+  tonDerivationPath String
+  tonQrCode     String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  deposits Deposit[]
+
+  @@map("user_wallets")
+}
+
+model Deposit {
+  id            String   @id @default(cuid())
+  userId        String
+  userWalletId  String
+  userWallet    UserWallet @relation(fields: [userWalletId], references: [id])
+  amount        String
+  currency      String   @default("USDT")
+  network       String
+  txId          String   @unique
+  wallet        String
+  confirmations Int      @default(0)
+  status        DepositStatus @default(PENDING)
+  webhookSent   Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  webhookLogs WebhookLog[]
+  forwardTransactions ForwardTransaction[]
+
+  @@map("deposits")
+}
+
+enum DepositStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+model ForwardTransaction {
+  id            String   @id @default(cuid())
+  depositId     String
+  deposit       Deposit  @relation(fields: [depositId], references: [id])
+  forwardTxHash String
+  network       String
+  amount        String
+  status        ForwardStatus @default(PENDING)
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("forward_transactions")
+}
+
+enum ForwardStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model WebhookLog {
+  id            String   @id @default(cuid())
+  depositId     String
+  deposit       Deposit  @relation(fields: [depositId], references: [id])
+  url           String
+  payload       String   // JSON string
+  signature     String
+  statusCode    Int?
+  response      String?
+  retryCount    Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@map("webhook_logs")
+} 
