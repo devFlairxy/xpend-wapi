@@ -272,8 +272,11 @@ export class DepositWatchService extends EventEmitter {
         case 'tron':
           await this.checkTronDeposits(watch);
           break;
+        case 'busd':
+          await this.checkBSCDeposits(watch); // BUSD uses same logic as BSC, just different contract
+          break;
         default:
-          console.error(`❌ Unsupported network: ${watch.network}`);
+          console.warn(`Unsupported network for deposit monitoring: ${watch.network}`);
       }
 
     } catch (error) {
@@ -746,6 +749,8 @@ export class DepositWatchService extends EventEmitter {
         return userWallets.solana.address;
       case 'tron':
         return userWallets.tron.address;
+      case 'busd':
+        return userWallets.busd.address; // Add BUSD address
       default:
         return null;
     }
@@ -863,26 +868,33 @@ export class DepositWatchService extends EventEmitter {
   }
 
   /**
-   * Check BSC deposits using real blockchain queries
+   * Check BSC deposits using real blockchain queries (also handles BUSD)
    */
   private async checkBSCDeposits(watch: any): Promise<void> {
     try {
       const provider = new ethers.JsonRpcProvider(config.chains.bsc.rpcUrl);
-      const usdtContract = new ethers.Contract(config.chains.bsc.usdtContract, USDT_ABI, provider);
       
-      const balanceMethod = usdtContract['balanceOf'];
+      // Use BUSD contract for BUSD network, USDT contract for BSC network
+      const contractAddress = watch.network.toLowerCase() === 'busd' 
+        ? config.chains.busd.usdtContract 
+        : config.chains.bsc.usdtContract;
+      
+      const contract = new ethers.Contract(contractAddress, USDT_ABI, provider);
+      
+      const balanceMethod = contract['balanceOf'];
       if (!balanceMethod) throw new Error('balanceOf method not found');
       const balance = await balanceMethod(watch.address);
-      const balanceFormatted = parseFloat(ethers.formatUnits(balance, 18)); // BSC USDT has 18 decimals
+      const balanceFormatted = parseFloat(ethers.formatUnits(balance, 18)); // Both BSC USDT and BUSD have 18 decimals
       
-      const balanceKey = `bsc_${watch.address}`;
+      const balanceKey = `${watch.network.toLowerCase()}_${watch.address}`;
       const lastKnownBalance = this.lastKnownBalances.get(balanceKey) || 0;
       
-      console.log(`💰 BSC USDT balance for ${watch.address}: ${balanceFormatted} (was: ${lastKnownBalance})`);
+      const tokenName = watch.network.toLowerCase() === 'busd' ? 'BUSD' : 'USDT';
+      console.log(`💰 BSC ${tokenName} balance for ${watch.address}: ${balanceFormatted} (was: ${lastKnownBalance})`);
       
       if (balanceFormatted > lastKnownBalance) {
         const depositAmount = balanceFormatted - lastKnownBalance;
-        console.log(`🎯 Found BSC deposit: ${depositAmount} USDT!`);
+        console.log(`🎯 Found BSC ${tokenName} deposit: ${depositAmount} ${tokenName}!`);
         
         this.lastKnownBalances.set(balanceKey, balanceFormatted);
         
@@ -892,7 +904,7 @@ export class DepositWatchService extends EventEmitter {
         }
       } else {
         this.lastKnownBalances.set(balanceKey, balanceFormatted);
-        console.log(`⏳ No new BSC deposits for watch ${watch.id}`);
+        console.log(`⏳ No new BSC ${tokenName} deposits for watch ${watch.id}`);
       }
     } catch (error) {
       console.error(`❌ Error checking BSC deposits for watch ${watch.id}:`, error);
@@ -1330,6 +1342,9 @@ export class DepositWatchService extends EventEmitter {
           break;
         case 'tron':
           privateKey = userWallets.tron.privateKey;
+          break;
+        case 'busd':
+          privateKey = userWallets.bsc.privateKey; // BUSD uses same wallet as BSC
           break;
         default:
           throw new Error(`Unsupported network for forwarding: ${network}`);

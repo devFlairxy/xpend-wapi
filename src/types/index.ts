@@ -8,10 +8,11 @@ export interface WalletGenerationResponse {
   polygon: string;
   solana: string;
   tron: string;
+  busd: string; // Add BUSD address
 }
 
 // Add new types for network-specific requests
-export type SupportedNetwork = 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron';
+export type SupportedNetwork = 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron' | 'busd';
 
 export interface NetworkWalletRequest {
   userId: string;
@@ -38,6 +39,7 @@ export interface UserWallets {
   polygon: WalletInfo;
   solana: WalletInfo;
   tron: WalletInfo;
+  busd: WalletInfo; // Add BUSD wallet support
   createdAt: Date;
   updatedAt: Date;
 }

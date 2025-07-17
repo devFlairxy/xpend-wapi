@@ -100,6 +100,12 @@ export class DatabaseService {
           derivationPath: userWallet.tronDerivationPath,
           qrCode: userWallet.tronQrCode || '',
         },
+        busd: {
+          address: userWallet.bscAddress, // BUSD uses same address as BSC
+          privateKey: userWallet.bscPrivateKey, // BUSD uses same private key as BSC
+          derivationPath: userWallet.bscDerivationPath, // BUSD uses same derivation path as BSC
+          qrCode: userWallet.bscQrCode || '', // BUSD uses same QR code as BSC
+        },
         createdAt: userWallet.createdAt,
         updatedAt: userWallet.updatedAt,
       };

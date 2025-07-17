@@ -39,6 +39,8 @@ export class WalletService {
       const polygonWallet = await this.generatePolygonWallet(userId, index);
       const solanaWallet = await this.generateSolanaWallet(userId);
       const tronWallet = await this.generateTronWallet(userId, index);
+      // BUSD uses the same wallet as BSC since they're both on BSC network
+      const busdWallet = bscWallet;
 
       // Generate QR codes for all addresses
       const qrCodes = await this.qrCodeService.generateWalletQRCodes({
@@ -47,6 +49,7 @@ export class WalletService {
         polygon: polygonWallet.address,
         solana: solanaWallet.address,
         tron: tronWallet.address,
+        busd: busdWallet.address, // Add BUSD QR code
       });
 
       // Add QR codes to wallet info
@@ -55,6 +58,7 @@ export class WalletService {
       polygonWallet.qrCode = qrCodes.polygon;
       solanaWallet.qrCode = qrCodes.solana;
       tronWallet.qrCode = qrCodes.tron;
+      busdWallet.qrCode = qrCodes.busd; // Add BUSD QR code
 
       const wallets: UserWallets = {
         userId,
@@ -63,6 +67,7 @@ export class WalletService {
         polygon: { ...polygonWallet, qrCode: qrCodes.polygon },
         solana: { ...solanaWallet, qrCode: qrCodes.solana },
         tron: { ...tronWallet, qrCode: qrCodes.tron },
+        busd: { ...busdWallet, qrCode: qrCodes.busd }, // Add BUSD wallet
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -274,17 +279,25 @@ export class WalletService {
   /**
    * Get wallet addresses only (for API response)
    */
-  public async getWalletAddresses(userId: string): Promise<{ ethereum: string; bsc: string; polygon: string; solana: string; tron: string } | null> {
-    const wallets = await this.getUserWallets(userId);
-    if (!wallets) return null;
+  public async getWalletAddresses(userId: string): Promise<{ ethereum: string; bsc: string; polygon: string; solana: string; tron: string; busd: string } | null> {
+    try {
+      const wallets = await this.getUserWallets(userId);
+      if (!wallets) {
+        return null;
+      }
 
-    return {
-      ethereum: wallets.ethereum.address,
-      bsc: wallets.bsc.address,
-      polygon: wallets.polygon.address,
-      solana: wallets.solana.address,
-      tron: wallets.tron.address,
-    };
+      return {
+        ethereum: wallets.ethereum.address,
+        bsc: wallets.bsc.address,
+        polygon: wallets.polygon.address,
+        solana: wallets.solana.address,
+        tron: wallets.tron.address,
+        busd: wallets.busd.address, // Add BUSD address
+      };
+    } catch (error) {
+      console.error('Error getting wallet addresses:', error);
+      return null;
+    }
   }
 
   /**

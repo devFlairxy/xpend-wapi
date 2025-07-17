@@ -90,13 +90,15 @@ export class ForwarderService {
         return await this.forwardSolana(request, masterWallet, attempt);
       case 'tron':
         return await this.forwardTron(request, masterWallet, attempt);
+      case 'busd':
+        return await this.forwardEthereumChains(request); // BUSD uses same logic as BSC, just different contract
       default:
         throw new Error(`Unsupported network: ${request.network}`);
     }
   }
 
   /**
-   * Forward USDT on Ethereum chains (Ethereum, BSC, Polygon)
+   * Forward USDT on Ethereum chains (Ethereum, BSC, Polygon) and BUSD
    */
   private async forwardEthereumChains(request: ForwardRequest): Promise<ForwardResult> {
     try {
@@ -112,26 +114,31 @@ export class ForwarderService {
       const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
       const wallet = new ethers.Wallet(privateKey, provider);
       
-      // Create USDT contract instance
-      const usdtContract = new ethers.Contract(
-        networkConfig.usdtContract,
+      // Create contract instance (USDT for most networks, BUSD for BUSD network)
+      const contractAddress = network === 'busd' 
+        ? config.chains.busd.usdtContract 
+        : networkConfig.usdtContract;
+      
+      const contract = new ethers.Contract(
+        contractAddress,
         USDT_ABI,
         wallet
       );
       
-      // Convert amount to USDT decimals (6 decimals)
-      const usdtAmount = ethers.parseUnits(amount, 6);
+      // Convert amount to token decimals (6 for most USDT, 18 for BSC USDT and BUSD)
+      const decimals = network === 'bsc' || network === 'busd' ? 18 : 6;
+      const tokenAmount = ethers.parseUnits(amount, decimals);
       
       // Estimate gas with null check
-      const transferFunction = usdtContract['transfer'];
+      const transferFunction = contract['transfer'];
       if (!transferFunction) {
-        throw new Error('USDT transfer function not found');
+        throw new Error('Token transfer function not found');
       }
       
-      const gasEstimate = await transferFunction.estimateGas(masterWallet, usdtAmount);
+      const gasEstimate = await transferFunction.estimateGas(masterWallet, tokenAmount);
       
       // Build transaction
-      const tx = await transferFunction.populateTransaction(masterWallet, usdtAmount, {
+      const tx = await transferFunction.populateTransaction(masterWallet, tokenAmount, {
         gasLimit: gasEstimate,
       });
       
@@ -142,6 +149,9 @@ export class ForwarderService {
       if (!receipt) {
         throw new Error('Transaction failed - no receipt received');
       }
+      
+      const tokenName = network === 'busd' ? 'BUSD' : 'USDT';
+      console.log(`✅ ${network.toUpperCase()} ${tokenName} transfer successful: ${receipt.hash}`);
       
       return {
         success: true,

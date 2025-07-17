@@ -46,6 +46,8 @@ services:
         sync: false
       - key: MASTER_WALLET_TRON
         sync: false
+      - key: MASTER_WALLET_BUSD
+        sync: false
       
       # USDT Contract Addresses
       - key: USDT_ETHEREUM_CONTRACT
@@ -58,6 +60,10 @@ services:
         value: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
       - key: USDT_TRON_CONTRACT
         value: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+      
+      # BUSD Contract Addresses
+      - key: BUSD_BSC_CONTRACT
+        value: "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56"
       
       # Webhook Configuration
       - key: WEBHOOK_SECRET

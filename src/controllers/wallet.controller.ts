@@ -54,6 +54,7 @@ export class WalletController {
         polygon: userWallets.polygon.address,
         solana: userWallets.solana.address,
         tron: userWallets.tron.address,
+        busd: userWallets.busd.address, // Add BUSD address
       };
 
       const response: ApiResponse<WalletGenerationResponse> = {
@@ -231,6 +232,7 @@ export class WalletController {
         polygon: userWallets.polygon.qrCode,
         solana: userWallets.solana.qrCode,
         tron: userWallets.tron.qrCode,
+        busd: userWallets.busd.qrCode, // Add BUSD QR code
       };
 
       const response: ApiResponse<typeof qrCodes> = {
@@ -334,7 +336,7 @@ export class WalletController {
     param('network')
       .isString()
       .withMessage('network must be a string')
-      .isIn(['ethereum', 'bsc', 'polygon', 'solana', 'tron'])
-      .withMessage('network must be one of: ethereum, bsc, polygon, solana, tron'),
+      .isIn(['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'])
+      .withMessage('network must be one of: ethereum, bsc, polygon, solana, tron, busd'),
   ];
 } 

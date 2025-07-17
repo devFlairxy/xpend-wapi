@@ -21,6 +21,7 @@ export const config = {
       polygon: process.env['MASTER_WALLET_POLYGON'] || '',
       solana: process.env['MASTER_WALLET_SOLANA'] || '',
       tron: process.env['MASTER_WALLET_TRON'] || '',
+      busd: process.env['MASTER_WALLET_BUSD'] || '', // Add BUSD master wallet
     },
   },
   chains: {
@@ -35,6 +36,12 @@ export const config = {
       rpcUrl: process.env['BSC_RPC_URL'] || 'https://bsc-dataseed.binance.org',
       chainId: 56,
       usdtContract: process.env['USDT_BSC_CONTRACT'] || '0x55d398326f99059fF775485246999027B3197955',
+    } as ChainConfig,
+    busd: {
+      name: 'Binance USD',
+      rpcUrl: process.env['BSC_RPC_URL'] || 'https://bsc-dataseed.binance.org', // BUSD runs on BSC
+      chainId: 56,
+      usdtContract: process.env['BUSD_BSC_CONTRACT'] || '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56', // BUSD contract
     } as ChainConfig,
     polygon: {
       name: 'Polygon',
