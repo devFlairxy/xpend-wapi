@@ -125,6 +125,7 @@ model DepositWatch {
   webhookUrl        String?  // URL to send webhook to
   txHash            String?  // Transaction hash if deposit found
   paymentId         String?  // Payment ID from credo for linking to specific deposit request
+  lastScannedBlock  Int?     // Last block number scanned for transaction-based detection
   lastCheckedAt     DateTime @default(now())
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
