@@ -30,11 +30,6 @@ export class WalletService {
    */
   public async generateWallets(userId: string): Promise<UserWallets> {
     try {
-      // Check if wallets already exist for this user
-      if (this.userWallets.has(userId)) {
-        throw new WalletGenerationError('Wallets already exist for this user');
-      }
-
       // Generate deterministic index from userId
       const index = this.generateIndexFromUserId(userId);
 
@@ -43,7 +38,7 @@ export class WalletService {
       const bscWallet = await this.generateBSCWallet(userId, index);
       const polygonWallet = await this.generatePolygonWallet(userId, index);
       const solanaWallet = await this.generateSolanaWallet(userId);
-      const tonWallet = await this.generateTONWallet(userId);
+      const tronWallet = await this.generateTronWallet(userId, index);
 
       // Generate QR codes for all addresses
       const qrCodes = await this.qrCodeService.generateWalletQRCodes({
@@ -51,7 +46,7 @@ export class WalletService {
         bsc: bscWallet.address,
         polygon: polygonWallet.address,
         solana: solanaWallet.address,
-        ton: tonWallet.address,
+        tron: tronWallet.address,
       });
 
       // Add QR codes to wallet info
@@ -59,24 +54,24 @@ export class WalletService {
       bscWallet.qrCode = qrCodes.bsc;
       polygonWallet.qrCode = qrCodes.polygon;
       solanaWallet.qrCode = qrCodes.solana;
-      tonWallet.qrCode = qrCodes.ton;
+      tronWallet.qrCode = qrCodes.tron;
 
-      const userWallets: UserWallets = {
+      const wallets: UserWallets = {
         userId,
-        ethereum: ethereumWallet,
-        bsc: bscWallet,
-        polygon: polygonWallet,
-        solana: solanaWallet,
-        ton: tonWallet,
+        ethereum: { ...ethereumWallet, qrCode: qrCodes.ethereum },
+        bsc: { ...bscWallet, qrCode: qrCodes.bsc },
+        polygon: { ...polygonWallet, qrCode: qrCodes.polygon },
+        solana: { ...solanaWallet, qrCode: qrCodes.solana },
+        tron: { ...tronWallet, qrCode: qrCodes.tron },
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
       // Store the wallets in memory and database
-      this.userWallets.set(userId, userWallets);
-      await this.databaseService.storeUserWallets(userWallets);
+      this.userWallets.set(userId, wallets);
+      await this.databaseService.storeUserWallets(wallets);
 
-      return userWallets;
+      return wallets;
     } catch (error) {
       throw new WalletGenerationError(
         `Failed to generate wallets: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -170,26 +165,31 @@ export class WalletService {
   }
 
   /**
-   * Generate TON wallet using deterministic method based on SHA256(userId)
+   * Generate Tron wallet using deterministic HD wallet
    */
-  private async generateTONWallet(userId: string): Promise<WalletInfo> {
+  private async generateTronWallet(_userId: string, index: number): Promise<WalletInfo> {
     try {
-      // Generate deterministic seed from userId
-      const hash = crypto.createHash('sha256').update(userId).digest();
-      
-      // For TON, we'll use a simplified approach
-      // In production, you'd use the TON SDK for proper wallet generation
-      const tonAddress = this.generateTONAddress(hash);
-      
+      const seedPhrase = config.blockchain.masterSeedPhrase;
+      if (!seedPhrase) {
+        throw new Error('Master seed phrase not configured');
+      }
+
+      // Generate HD wallet using the same pattern as Ethereum
+      const derivationPath = `m/44'/195'/0'/0/${index}`; // Tron uses coin type 195
+      const wallet = ethers.HDNodeWallet.fromPhrase(seedPhrase, derivationPath);
+
+      // Convert to Tron address format
+      const tronAddress = this.convertToTronAddress(wallet.address);
+
       return {
-        address: tonAddress,
-        privateKey: hash.toString('hex'),
-        derivationPath: 'ton-deterministic',
+        address: tronAddress,
+        privateKey: wallet.privateKey,
+        derivationPath,
       };
     } catch (error) {
       throw new WalletGenerationError(
-        `Failed to generate TON wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'ton'
+        `Failed to generate Tron wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'tron'
       );
     }
   }
@@ -199,17 +199,55 @@ export class WalletService {
    */
   private generateIndexFromUserId(userId: string): number {
     const hash = crypto.createHash('sha256').update(userId).digest();
-    return hash.readUInt32BE(0);
+    // Use modulo to ensure the index is within a reasonable range (0 to 999999)
+    // This prevents BIP44 derivation path errors while maintaining deterministic generation
+    return hash.readUInt32BE(0) % 1000000;
   }
 
   /**
-   * Generate TON address from hash (simplified implementation)
+   * Convert Ethereum address to Tron address format
    */
-  private generateTONAddress(hash: Buffer): string {
-    // This is a simplified TON address generation
-    // In production, use proper TON SDK methods
-    const addressBytes = hash.slice(0, 32);
-    return `EQ${addressBytes.toString('base64url')}`;
+  private convertToTronAddress(ethAddress: string): string {
+    try {
+      // Remove 0x prefix and convert to Buffer
+      const addressBytes = Buffer.from(ethAddress.slice(2), 'hex');
+      
+      // Add Tron address prefix (0x41)
+      const tronBytes = Buffer.concat([Buffer.from([0x41]), addressBytes]);
+      
+      // Calculate double SHA256 checksum
+      const hash1 = crypto.createHash('sha256').update(tronBytes).digest();
+      const hash2 = crypto.createHash('sha256').update(hash1).digest();
+      const checksum = hash2.slice(0, 4);
+      
+      // Combine address + checksum and encode as base58
+      const fullAddress = Buffer.concat([tronBytes, checksum]);
+      return this.base58Encode(fullAddress);
+    } catch (error) {
+      throw new Error(`Failed to convert to Tron address: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Base58 encoding for Tron addresses
+   */
+  private base58Encode(buffer: Buffer): string {
+    const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let num = BigInt('0x' + buffer.toString('hex'));
+    let result = '';
+    
+    while (num > 0) {
+      const remainder = num % 58n;
+      result = alphabet[Number(remainder)] + result;
+      num = num / 58n;
+    }
+    
+    // Add leading zeros
+    for (let i = 0; i < buffer.length && buffer[i] === 0; i++) {
+      result = '1' + result;
+    }
+    
+    return result;
   }
 
   /**
@@ -236,7 +274,7 @@ export class WalletService {
   /**
    * Get wallet addresses only (for API response)
    */
-  public async getWalletAddresses(userId: string): Promise<{ ethereum: string; bsc: string; polygon: string; solana: string; ton: string } | null> {
+  public async getWalletAddresses(userId: string): Promise<{ ethereum: string; bsc: string; polygon: string; solana: string; tron: string } | null> {
     const wallets = await this.getUserWallets(userId);
     if (!wallets) return null;
 
@@ -245,8 +283,37 @@ export class WalletService {
       bsc: wallets.bsc.address,
       polygon: wallets.polygon.address,
       solana: wallets.solana.address,
-      ton: wallets.ton.address,
+      tron: wallets.tron.address,
     };
+  }
+
+  /**
+   * Get wallet information for a specific network
+   */
+  public async getNetworkWallet(userId: string, network: string): Promise<{ address: string; qrCode?: string } | null> {
+    const wallets = await this.getUserWallets(userId);
+    if (!wallets) return null;
+
+    // Validate network
+    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron'];
+    if (!supportedNetworks.includes(network)) {
+      throw new WalletGenerationError(`Unsupported network: ${network}. Supported networks: ${supportedNetworks.join(', ')}`);
+    }
+
+    const walletInfo = wallets[network as keyof typeof wallets];
+    if (!walletInfo || typeof walletInfo === 'string' || walletInfo instanceof Date) {
+      throw new WalletGenerationError(`No wallet found for network: ${network}`);
+    }
+
+    const result: { address: string; qrCode?: string } = {
+      address: walletInfo.address,
+    };
+    
+    if (walletInfo.qrCode) {
+      result.qrCode = walletInfo.qrCode;
+    }
+    
+    return result;
   }
 
   /**
@@ -261,10 +328,7 @@ export class WalletService {
       throw new WalletGenerationError('UserId cannot be empty');
     }
 
-    // Check if wallets already exist
-    if (this.userWallets.has(userId)) {
-      throw new WalletGenerationError('Wallets already exist for this user');
-    }
+    // Note: Existing wallet check is now handled in the controller
   }
 
   /**

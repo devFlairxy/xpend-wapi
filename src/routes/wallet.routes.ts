@@ -24,6 +24,16 @@ router.get(
 );
 
 /**
+ * GET /api/deposit-wallets/:userId/:network
+ * Get wallet information for a specific network
+ */
+router.get(
+  '/deposit-wallets/:userId/:network',
+  WalletController.validateNetworkWallet,
+  walletController.getNetworkWallet
+);
+
+/**
  * GET /api/deposit-wallets/:userId/qr-codes
  * Get QR codes for user wallets
  */

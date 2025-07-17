@@ -44,10 +44,10 @@ export class DatabaseService {
           solanaDerivationPath: userWallets.solana.derivationPath,
           solanaQrCode: userWallets.solana.qrCode || null,
           
-          tonAddress: userWallets.ton.address,
-          tonPrivateKey: userWallets.ton.privateKey,
-          tonDerivationPath: userWallets.ton.derivationPath,
-          tonQrCode: userWallets.ton.qrCode || null,
+          tronAddress: userWallets.tron.address,
+          tronPrivateKey: userWallets.tron.privateKey,
+          tronDerivationPath: userWallets.tron.derivationPath,
+          tronQrCode: userWallets.tron.qrCode || null,
         },
       });
     } catch (error) {
@@ -94,11 +94,11 @@ export class DatabaseService {
           derivationPath: userWallet.solanaDerivationPath,
           qrCode: userWallet.solanaQrCode || '',
         },
-        ton: {
-          address: userWallet.tonAddress,
-          privateKey: userWallet.tonPrivateKey,
-          derivationPath: userWallet.tonDerivationPath,
-          qrCode: userWallet.tonQrCode || '',
+        tron: {
+          address: userWallet.tronAddress,
+          privateKey: userWallet.tronPrivateKey,
+          derivationPath: userWallet.tronDerivationPath,
+          qrCode: userWallet.tronQrCode || '',
         },
         createdAt: userWallet.createdAt,
         updatedAt: userWallet.updatedAt,
@@ -281,7 +281,7 @@ export class DatabaseService {
           bscAddress: true,
           polygonAddress: true,
           solanaAddress: true,
-          tonAddress: true,
+          tronAddress: true,
         },
       });
 
@@ -292,7 +292,7 @@ export class DatabaseService {
           bsc: wallet.bscAddress,
           polygon: wallet.polygonAddress,
           solana: wallet.solanaAddress,
-          ton: wallet.tonAddress,
+          tron: wallet.tronAddress,
         },
       }));
     } catch (error) {

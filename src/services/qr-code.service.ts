@@ -40,21 +40,21 @@ export class QRCodeService {
     bsc: string;
     polygon: string;
     solana: string;
-    ton: string;
+    tron: string;
   }): Promise<{
     ethereum: string;
     bsc: string;
     polygon: string;
     solana: string;
-    ton: string;
+    tron: string;
   }> {
     try {
-      const [ethereumQR, bscQR, polygonQR, solanaQR, tonQR] = await Promise.all([
+      const [ethereumQR, bscQR, polygonQR, solanaQR, tronQR] = await Promise.all([
         this.generateQRCode(addresses.ethereum),
         this.generateQRCode(addresses.bsc),
         this.generateQRCode(addresses.polygon),
         this.generateQRCode(addresses.solana),
-        this.generateQRCode(addresses.ton),
+        this.generateQRCode(addresses.tron),
       ]);
 
       return {
@@ -62,7 +62,7 @@ export class QRCodeService {
         bsc: bscQR,
         polygon: polygonQR,
         solana: solanaQR,
-        ton: tonQR,
+        tron: tronQR,
       };
     } catch (error) {
       throw new Error(`Failed to generate wallet QR codes: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -74,14 +74,14 @@ export class QRCodeService {
    */
   public async generateChainQRCode(
     address: string, 
-    chain: 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'ton'
+    chain: 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron'
   ): Promise<string> {
     const chainColors = {
       ethereum: { dark: '#627EEA', light: '#FFFFFF' },
       bsc: { dark: '#F3BA2F', light: '#FFFFFF' },
       polygon: { dark: '#8247E5', light: '#FFFFFF' },
       solana: { dark: '#14F195', light: '#FFFFFF' },
-      ton: { dark: '#0088CC', light: '#FFFFFF' },
+      tron: { dark: '#0088CC', light: '#FFFFFF' },
     };
 
     try {

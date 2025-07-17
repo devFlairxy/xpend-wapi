@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import { WalletService } from '../services/wallet.service';
 import { DepositDetectionService } from '../services/deposit-detection.service';
-import { WalletGenerationRequest, WalletGenerationResponse, ApiResponse } from '../types';
-import { body, validationResult } from 'express-validator';
+import { WalletGenerationRequest, WalletGenerationResponse, ApiResponse, NetworkWalletResponse, SupportedNetwork } from '../types';
+import { body, validationResult, param } from 'express-validator';
 
 export class WalletController {
   private walletService: WalletService;
@@ -34,11 +34,18 @@ export class WalletController {
 
       const { userId }: WalletGenerationRequest = req.body;
 
-      // Validate wallet generation request
-      this.walletService.validateWalletRequest(userId);
-
-      // Generate wallets for all chains
-      const userWallets = await this.walletService.generateWallets(userId);
+      // Check if user already has wallets first
+      let userWallets = await this.walletService.getUserWallets(userId);
+      let isNewWallet = false;
+      
+      if (!userWallets) {
+        // Validate wallet generation request
+        this.walletService.validateWalletRequest(userId);
+        
+        // Generate wallets for all chains
+        userWallets = await this.walletService.generateWallets(userId);
+        isNewWallet = true;
+      }
 
       // Return only the addresses for security
       const walletAddresses: WalletGenerationResponse = {
@@ -46,13 +53,13 @@ export class WalletController {
         bsc: userWallets.bsc.address,
         polygon: userWallets.polygon.address,
         solana: userWallets.solana.address,
-        ton: userWallets.ton.address,
+        tron: userWallets.tron.address,
       };
 
       const response: ApiResponse<WalletGenerationResponse> = {
         success: true,
         data: walletAddresses,
-        message: 'Wallets generated successfully',
+        message: isNewWallet ? 'Wallets generated successfully' : 'Wallets retrieved successfully',
       };
 
       res.status(201).json(response);
@@ -116,6 +123,81 @@ export class WalletController {
   };
 
   /**
+   * GET /api/deposit-wallets/:userId/:network
+   * Get wallet information for a specific network
+   */
+  public getNetworkWallet = async (req: Request, res: Response): Promise<void> => {
+    try {
+      // Validate request parameters
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        const firstError = errors.array()[0];
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'Validation failed',
+          message: firstError?.msg || 'Validation error',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      const { userId, network } = req.params;
+
+      if (!userId || typeof userId !== 'string') {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'Invalid userId provided',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      if (!network || typeof network !== 'string') {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'Invalid network provided',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      const walletInfo = await this.walletService.getNetworkWallet(userId, network);
+
+      if (!walletInfo) {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'No wallets found for this user',
+        };
+        res.status(404).json(response);
+        return;
+      }
+
+      const responseData: NetworkWalletResponse = {
+        network: network as SupportedNetwork,
+        address: walletInfo.address,
+        ...(walletInfo.qrCode && { qrCode: walletInfo.qrCode }),
+      };
+
+      const response: ApiResponse<NetworkWalletResponse> = {
+        success: true,
+        data: responseData,
+        message: `Wallet for ${network} retrieved successfully`,
+      };
+
+      res.status(200).json(response);
+    } catch (error) {
+      console.error('Get network wallet error:', error);
+      
+      const response: ApiResponse<null> = {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+
+      res.status(500).json(response);
+    }
+  };
+
+  /**
    * GET /api/deposit-wallets/:userId/qr-codes
    * Get QR codes for user wallets
    */
@@ -148,7 +230,7 @@ export class WalletController {
         bsc: userWallets.bsc.qrCode,
         polygon: userWallets.polygon.qrCode,
         solana: userWallets.solana.qrCode,
-        ton: userWallets.ton.qrCode,
+        tron: userWallets.tron.qrCode,
       };
 
       const response: ApiResponse<typeof qrCodes> = {
@@ -235,5 +317,24 @@ export class WalletController {
       .trim()
       .isLength({ min: 1, max: 100 })
       .withMessage('userId must be between 1 and 100 characters'),
+  ];
+
+  /**
+   * Validation middleware for network wallet endpoint
+   */
+  public static validateNetworkWallet = [
+    param('userId')
+      .isString()
+      .withMessage('userId must be a string')
+      .notEmpty()
+      .withMessage('userId cannot be empty')
+      .trim()
+      .isLength({ min: 1, max: 100 })
+      .withMessage('userId must be between 1 and 100 characters'),
+    param('network')
+      .isString()
+      .withMessage('network must be a string')
+      .isIn(['ethereum', 'bsc', 'polygon', 'solana', 'tron'])
+      .withMessage('network must be one of: ethereum, bsc, polygon, solana, tron'),
   ];
 } 

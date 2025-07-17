@@ -17,7 +17,7 @@ async function testWalletGeneration() {
     console.log(`BSC: ${userWallets.bsc.address}`);
     console.log(`Polygon: ${userWallets.polygon.address}`);
     console.log(`Solana: ${userWallets.solana.address}`);
-    console.log(`TON: ${userWallets.ton.address}`);
+    console.log(`Tron: ${userWallets.tron.address}`);
 
     // Test wallet address retrieval
     console.log('\n🔍 Testing wallet address retrieval...');
@@ -28,7 +28,7 @@ async function testWalletGeneration() {
         addresses.bsc === userWallets.bsc.address &&
         addresses.polygon === userWallets.polygon.address &&
         addresses.solana === userWallets.solana.address &&
-        addresses.ton === userWallets.ton.address
+        addresses.tron === userWallets.tron.address
     ) {
       console.log('✅ Wallet address retrieval test passed');
     } else {

@@ -7,7 +7,21 @@ export interface WalletGenerationResponse {
   bsc: string;
   polygon: string;
   solana: string;
-  ton: string;
+  tron: string;
+}
+
+// Add new types for network-specific requests
+export type SupportedNetwork = 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron';
+
+export interface NetworkWalletRequest {
+  userId: string;
+  network: SupportedNetwork;
+}
+
+export interface NetworkWalletResponse {
+  network: SupportedNetwork;
+  address: string;
+  qrCode?: string;
 }
 
 export interface WalletInfo {
@@ -23,7 +37,7 @@ export interface UserWallets {
   bsc: WalletInfo;
   polygon: WalletInfo;
   solana: WalletInfo;
-  ton: WalletInfo;
+  tron: WalletInfo;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,6 +64,42 @@ export interface DepositWebhookPayload {
   txId: string;
   wallet: string;
 }
+
+// New deposit monitoring types
+export interface DepositWatchRequest {
+  userId: string;
+  network: SupportedNetwork;
+  expectedAmount: string;
+  webhookUrl?: string;
+}
+
+export interface DepositWatchResponse {
+  id: string;
+  userId: string;
+  address: string;
+  network: string;
+  expectedAmount: string;
+  status: 'ACTIVE' | 'CONFIRMED' | 'EXPIRED' | 'INACTIVE';
+  expiresAt: string;
+  confirmations: number;
+  txHash?: string;
+  actualAmount?: string;
+}
+
+export interface DepositMonitorWebhookPayload {
+  userId: string;
+  address: string;
+  network: string;
+  expectedAmount: string;
+  actualAmount: string;
+  confirmations: number;
+  status: 'CONFIRMED' | 'EXPIRED';
+  txHash: string | null;
+  timestamp: string;
+  watchId: string;
+}
+
+export type WatchStatus = 'ACTIVE' | 'CONFIRMED' | 'EXPIRED' | 'INACTIVE';
 
 export interface DepositInfo {
   id: string;

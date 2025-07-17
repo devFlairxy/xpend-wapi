@@ -33,10 +33,10 @@ model UserWallet {
   solanaDerivationPath String
   solanaQrCode  String?
   
-  tonAddress    String
-  tonPrivateKey String
-  tonDerivationPath String
-  tonQrCode     String?
+  tronAddress   String
+  tronPrivateKey String
+  tronDerivationPath String
+  tronQrCode    String?
   
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -108,4 +108,31 @@ model WebhookLog {
   createdAt     DateTime @default(now())
 
   @@map("webhook_logs")
+}
+
+model DepositWatch {
+  id                String   @id @default(cuid())
+  userId            String
+  address           String
+  network           String
+  expectedAmount    String   // Expected deposit amount
+  actualAmount      String?  // Actual amount received (if any)
+  confirmations     Int      @default(0)
+  status            WatchStatus @default(ACTIVE)
+  expiresAt         DateTime // 1 hour from creation
+  webhookSent       Boolean  @default(false)
+  webhookUrl        String?  // URL to send webhook to
+  txHash            String?  // Transaction hash if deposit found
+  lastCheckedAt     DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("deposit_watches")
+}
+
+enum WatchStatus {
+  ACTIVE      // Currently watching
+  CONFIRMED   // Deposit confirmed (5+ confirmations)
+  EXPIRED     // 1 hour expired without deposit
+  INACTIVE    // Manually stopped
 } 

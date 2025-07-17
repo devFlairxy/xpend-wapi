@@ -4,7 +4,8 @@ import morgan from 'morgan';
 import { config, validateConfig } from './config';
 import { securityMiddleware } from './middleware/security';
 import walletRoutes from './routes/wallet.routes';
-import { DepositDetectionService } from './services/deposit-detection.service';
+import depositWatchRoutes from './routes/deposit-watch.routes';
+import { DepositWatchService } from './services/deposit-watch.service';
 
 class App {
   public app: express.Application;
@@ -47,6 +48,7 @@ class App {
 
     // API routes with API key validation
     this.app.use('/api', securityMiddleware.validateApiKey, walletRoutes);
+    this.app.use('/api/deposit-watch', securityMiddleware.validateApiKey, depositWatchRoutes);
   }
 
   private initializeErrorHandling(): void {
@@ -68,13 +70,13 @@ class App {
         console.log(`🚀 USDT Deposit Backend server running on port ${port}`);
         console.log(`📊 Environment: ${config.server.nodeEnv}`);
         console.log(`🔗 Health check: http://localhost:${port}/health`);
-        console.log(`💳 API endpoint: http://localhost:${port}/api/deposit-wallets`);
+        console.log(`💳 Wallet API: http://localhost:${port}/api/deposit-wallets`);
+        console.log(`⏰ Deposit Watch API: http://localhost:${port}/api/deposit-watch`);
       });
 
-      // Start deposit monitoring
-      const depositDetectionService = DepositDetectionService.getInstance();
-      await depositDetectionService.startMonitoring();
-      console.log('🔍 Deposit monitoring started');
+      // Initialize deposit watch service (user-initiated monitoring only)
+      DepositWatchService.getInstance();
+      console.log('⏰ Deposit watch service started (user-initiated monitoring only)');
     } catch (error) {
       console.error('❌ Failed to start server:', error);
       process.exit(1);

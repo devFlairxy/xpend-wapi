@@ -48,11 +48,11 @@ export const config = {
       chainId: 0, // Solana doesn't use chainId like EVM chains
       usdtContract: process.env['USDT_SOLANA_MINT'] || 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
     } as ChainConfig,
-    ton: {
-      name: 'TON',
-      rpcUrl: process.env['TON_RPC_URL'] || 'https://toncenter.com/api/v2/jsonRPC',
-      chainId: 0, // TON doesn't use chainId like EVM chains
-      usdtContract: '', // TON USDT contract address
+    tron: {
+      name: 'Tron',
+      rpcUrl: process.env['TRON_RPC_URL'] || 'https://api.trongrid.io',
+      chainId: 728126428, // Tron mainnet
+      usdtContract: process.env['USDT_TRON_CONTRACT'] || 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
     } as ChainConfig,
   },
   webhook: {
