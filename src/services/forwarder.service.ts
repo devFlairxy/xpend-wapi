@@ -1,7 +1,9 @@
 import { ethers } from 'ethers';
-import { Connection, Keypair } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { getOrCreateAssociatedTokenAccount, transfer, getMint } from '@solana/spl-token';
 import { config } from '../config';
 import { ForwardRequest, ForwardResult } from '../types';
+import TronWeb from 'tronweb';
 
 // USDT ABI for EVM chains
 const USDT_ABI = [
@@ -9,6 +11,9 @@ const USDT_ABI = [
   'function balanceOf(address account) view returns (uint256)',
   'function decimals() view returns (uint8)',
 ];
+
+// Solana USDT mint address (mainnet)
+const SOLANA_USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
 export class ForwarderService {
   private static instance: ForwarderService;
@@ -83,8 +88,8 @@ export class ForwarderService {
         return await this.forwardEthereumChains(request);
       case 'solana':
         return await this.forwardSolana(request, masterWallet, attempt);
-      case 'ton':
-        return await this.forwardTON(request, masterWallet, attempt);
+      case 'tron':
+        return await this.forwardTron(request, masterWallet, attempt);
       default:
         throw new Error(`Unsupported network: ${request.network}`);
     }
@@ -163,19 +168,48 @@ export class ForwarderService {
       const connection = new Connection(config.chains.solana.rpcUrl);
       const fromKeypair = this.createSolanaKeypair(request.privateKey);
       
-      // Get recent blockhash for transaction
-      await connection.getLatestBlockhash();
+      // Get USDT mint address
+      const mintAddress = new PublicKey(SOLANA_USDT_MINT);
       
-      // For now, we'll use a simplified approach since the Token class is deprecated
-      // In production, you'd use the newer @solana/spl-token library
-      console.log(`📤 Solana USDT transfer: ${request.amount} from ${fromKeypair.publicKey.toString()} to ${masterWallet}`);
+      // Get USDT token account for the sender
+      const senderTokenAccount = await getOrCreateAssociatedTokenAccount(
+        connection,
+        fromKeypair,
+        mintAddress,
+        fromKeypair.publicKey
+      );
       
-      // Placeholder for actual Solana USDT transfer
-      // This would need to be implemented with the current Solana SPL token library
+      // Get USDT token account for the receiver (master wallet)
+      const receiverTokenAccount = await getOrCreateAssociatedTokenAccount(
+        connection,
+        fromKeypair, // Payer for creating account if needed
+        mintAddress,
+        new PublicKey(masterWallet)
+      );
+      
+      // Get USDT mint info for decimals
+      const mintInfo = await getMint(connection, mintAddress);
+      
+      // Convert amount to proper decimals (USDT on Solana has 6 decimals)
+      const decimals = Number(mintInfo.decimals);
+      const usdtAmount = BigInt(parseFloat(request.amount) * Math.pow(10, decimals));
+      
+      // Create and send transfer transaction
+      const signature = await transfer(
+        connection,
+        fromKeypair,
+        senderTokenAccount.address,
+        receiverTokenAccount.address,
+        fromKeypair,
+        usdtAmount
+      );
+      
+      // Wait for confirmation
+      await connection.confirmTransaction(signature);
       
       return {
         success: true,
-        txHash: `solana_placeholder_${Date.now()}`,
+        txHash: signature,
         retries: attempt - 1,
       };
     } catch (error) {
@@ -188,32 +222,50 @@ export class ForwarderService {
   }
 
   /**
-   * Forward USDT on TON (simplified implementation)
+   * Forward USDT on Tron (TRC20 USDT)
    */
-  private async forwardTON(
+  private async forwardTron(
     request: ForwardRequest, 
     masterWallet: string, 
     attempt: number
   ): Promise<ForwardResult> {
     try {
-      // For TON, we'll use a simplified approach
-      // In production, use the TON SDK or API to send USDT transfers
-      console.log(`📤 TON USDT transfer: ${request.amount} from ${request.fromWallet} to ${masterWallet}`);
+      // Initialize TronWeb
+      const TronWebConstructor = (TronWeb as any).TronWeb || (TronWeb as any).default.TronWeb;
+      const tronWeb = new TronWebConstructor(
+        config.chains.tron.rpcUrl,
+        config.chains.tron.rpcUrl,
+        config.chains.tron.rpcUrl,
+        request.privateKey
+      );
+
+      // Tron USDT contract address (TRC20)
+      const usdtContractAddress = config.chains.tron.usdtContract;
       
-      // This is a placeholder - in production, implement actual TON USDT transfer
-      // Example:
-      // const tonApi = new TONApi(config.chains.ton.rpcUrl);
-      // const result = await tonApi.sendUsdtTransfer(request.privateKey, masterWallet, request.amount);
+      // Get USDT contract instance
+      const contract = await tronWeb.contract().at(usdtContractAddress);
       
-      // Simulate transaction hash for now
-      const txHash = `ton_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+      // Convert amount to USDT decimals (6 decimals for TRC20 USDT)
+      const usdtAmount = Math.floor(parseFloat(request.amount) * 1000000); // 6 decimals
+      
+      // Execute transfer
+      const transaction = await contract.transfer(masterWallet, usdtAmount).send({
+        feeLimit: 10000000, // 10 TRX fee limit
+      });
+      
+      if (!transaction) {
+        throw new Error('Transaction failed - no transaction hash received');
+      }
+      
+      console.log(`✅ Tron USDT transfer successful: ${transaction}`);
       
       return {
         success: true,
-        txHash,
+        txHash: transaction,
         retries: attempt - 1,
       };
     } catch (error) {
+      console.error(`❌ Tron forwarding error:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -283,7 +335,7 @@ export class ForwarderService {
       throw new Error('Amount must be greater than 0');
     }
 
-    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'ton'];
+    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron'];
     if (!supportedNetworks.includes(request.network)) {
       throw new Error(`Unsupported network: ${request.network}`);
     }

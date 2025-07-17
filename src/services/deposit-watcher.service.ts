@@ -466,8 +466,8 @@ export class DepositWatcherService {
         case 'solana':
           privateKey = userWallets.solana.privateKey;
           break;
-        case 'ton':
-          privateKey = userWallets.ton.privateKey;
+        case 'tron':
+          privateKey = userWallets.tron.privateKey;
           break;
         default:
           throw new Error(`Unsupported network for forwarding: ${network}`);
@@ -476,7 +476,7 @@ export class DepositWatcherService {
       // Create forward request
       const forwardRequest: ForwardRequest = {
         userId: userWallets.userId,
-        network: network as 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'ton',
+        network: network as 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron',
         amount: amount,
         fromWallet: fromWallet,
         privateKey: privateKey,

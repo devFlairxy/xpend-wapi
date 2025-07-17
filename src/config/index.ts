@@ -20,7 +20,7 @@ export const config = {
       bsc: process.env['MASTER_WALLET_BSC'] || '',
       polygon: process.env['MASTER_WALLET_POLYGON'] || '',
       solana: process.env['MASTER_WALLET_SOLANA'] || '',
-      ton: process.env['MASTER_WALLET_TON'] || '',
+      tron: process.env['MASTER_WALLET_TRON'] || '',
     },
   },
   chains: {

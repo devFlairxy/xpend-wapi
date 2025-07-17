@@ -39,10 +39,10 @@ await this.sendWebhookWithHealthCheck(watch, 'CONFIRMED', txHash, actualAmount);
 - **Ethereum**: Complete USDT forwarding via ethers.js
 - **BSC**: Complete USDT forwarding via ethers.js  
 - **Polygon**: Complete USDT forwarding via ethers.js
+- **Solana**: Complete USDT forwarding via @solana/spl-token
+- **Tron**: Complete TRC20 USDT forwarding via TronWeb
 
-### ⚠️ **Needs Implementation**
-- **Solana**: Placeholder implementation (needs @solana/spl-token integration)
-- **Tron**: Placeholder implementation (needs TronWeb integration)
+All networks now support automatic fund forwarding to master wallets with proper error handling and retry logic.
 
 ## 🔧 Configuration Required
 
@@ -141,46 +141,26 @@ const result = await contract.transfer(
 ).send({ from: fromAddress });
 ```
 
-### **3. Gas Fee Management**
-- **Reserve native tokens** in user wallets for gas fees
-- **Implement gas estimation** with buffer for network congestion
-- **Monitor gas prices** and adjust accordingly
-- **Handle failed transactions** due to insufficient gas
-
-### **4. Monitoring & Alerting**
-- **Track forwarding success rates** by network
-- **Alert on consecutive failures** (may indicate network issues)
-- **Monitor master wallet balances** to ensure they don't run out of gas
-- **Log all forwarding transactions** for audit trails
-
-## 📈 Performance Optimizations
-
-### **Parallel Processing**
-- **Forward multiple deposits** simultaneously when possible
-- **Batch transactions** where supported by the network
-- **Use connection pooling** for RPC providers
-
-### **Gas Optimization**
-- **Estimate gas accurately** to avoid overpaying
-- **Monitor network congestion** and adjust fees
-- **Use optimal transaction timing** during low-fee periods
-
 ## 🧪 Testing Strategy
 
 ### **Unit Tests**
 ```typescript
 describe('AutoForwardDeposit', () => {
-  it('should forward USDT to master wallet on Ethereum', async () => {
-    const result = await depositWatchService.autoForwardDeposit(
-      'user123',
-      'ethereum', 
-      '100.0',
-      userWalletAddress,
-      depositTxHash
-    );
+  it('should forward USDT to master wallet on all networks', async () => {
+    const networks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron'];
     
-    expect(result.success).toBe(true);
-    expect(result.txHash).toBeDefined();
+    for (const network of networks) {
+      const result = await depositWatchService.autoForwardDeposit(
+        'user123',
+        network, 
+        '100.0',
+        userWalletAddress,
+        depositTxHash
+      );
+      
+      expect(result.success).toBe(true);
+      expect(result.txHash).toBeDefined();
+    }
   });
 });
 ```
@@ -221,7 +201,12 @@ Track these metrics:
 | Ethereum | ✅ Complete | ✅ Complete | **Production Ready** |
 | BSC      | ✅ Complete | ✅ Complete | **Production Ready** |
 | Polygon  | ✅ Complete | ✅ Complete | **Production Ready** |
-| Solana   | ✅ Complete | ⚠️ Placeholder | **Needs Implementation** |
-| Tron     | ✅ Complete | ⚠️ Placeholder | **Needs Implementation** |
+| Solana   | ✅ Complete | ✅ Complete | **Production Ready** |
+| Tron     | ✅ Complete | ✅ Complete | **Production Ready** |
 
-The auto-forwarding system is **immediately active** for Ethereum, BSC, and Polygon networks. Solana and Tron forwarding will activate once their implementations are completed. 
+The auto-forwarding system is **immediately active** for all supported networks with proper implementations using industry-standard libraries:
+- **EVM Chains (ETH/BSC/Polygon)**: ethers.js with USDT contract integration
+- **Solana**: @solana/spl-token for SPL token transfers  
+- **Tron**: TronWeb for TRC20 USDT transfers
+
+🎉 **All networks now support automatic fund forwarding to master wallets!**

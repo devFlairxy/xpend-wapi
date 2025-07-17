@@ -1,0 +1,94 @@
+services:
+  - type: web
+    name: wallet-api
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run db:generate && npm run build
+    startCommand: npm run db:migrate && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: API_KEY_SECRET
+        sync: false
+      
+      # Blockchain RPC Endpoints
+      - key: ETHEREUM_RPC_URL
+        sync: false
+      - key: BSC_RPC_URL
+        value: "https://bsc-dataseed.binance.org"
+      - key: POLYGON_RPC_URL
+        value: "https://polygon-rpc.com"
+      - key: SOLANA_RPC_URL
+        value: "https://api.mainnet-beta.solana.com"
+      - key: TRON_RPC_URL
+        value: "https://api.trongrid.io"
+      
+      # Wallet Configuration
+      - key: MASTER_SEED_PHRASE
+        sync: false
+      - key: WALLET_DERIVATION_PATH
+        value: "m/44'/60'/0'/0"
+      
+      # Master Wallet Addresses (for auto-forwarding)
+      - key: MASTER_WALLET_ETH
+        sync: false
+      - key: MASTER_WALLET_BSC
+        sync: false
+      - key: MASTER_WALLET_POLYGON
+        sync: false
+      - key: MASTER_WALLET_SOLANA
+        sync: false
+      - key: MASTER_WALLET_TRON
+        sync: false
+      
+      # USDT Contract Addresses
+      - key: USDT_ETHEREUM_CONTRACT
+        value: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+      - key: USDT_BSC_CONTRACT
+        value: "0x55d398326f99059fF775485246999027B3197955"
+      - key: USDT_POLYGON_CONTRACT
+        value: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+      - key: USDT_SOLANA_MINT
+        value: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+      - key: USDT_TRON_CONTRACT
+        value: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+      
+      # Webhook Configuration
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: DEPOSIT_WEBHOOK_URL
+        sync: false
+      - key: SHARED_SECRET
+        sync: false
+      
+      # Logging
+      - key: LOG_LEVEL
+        value: "info"
+      - key: LOG_FILE
+        value: "logs/app.log"
+      
+      # Rate Limiting
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "100"
+      
+      # Monitoring and Security
+      - key: SENTRY_DSN
+        sync: false
+    
+    healthCheckPath: /health
+    autoDeploy: true
+
+databases:
+  - name: wallet-api-db
+    databaseName: wallet_api
+    user: wallet_api_user 
