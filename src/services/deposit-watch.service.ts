@@ -370,7 +370,6 @@ export class DepositWatchService extends EventEmitter {
    */
   private async handleConfirmedDeposit(watch: any, txHash: string, actualAmount: string): Promise<void> {
     let webhookSent = false;
-    let forwardingSuccessful = false;
     
     try {
       console.log(`🎉 DEPOSIT CONFIRMED for watch ${watch.id}!`);
@@ -390,7 +389,6 @@ export class DepositWatchService extends EventEmitter {
         );
         
         if (forwardingResult.success) {
-          forwardingSuccessful = true;
           console.log(`✅ Auto-forward successful: ${forwardingResult.txHash}`);
           console.log(`💰 User wallet ${watch.address} balance reset to 0`);
         } else {

@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { getOrCreateAssociatedTokenAccount, transfer, getMint } from '@solana/spl-token';
 import { config } from '../config';
 import { ForwardRequest, ForwardResult } from '../types';
