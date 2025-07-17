@@ -5,9 +5,11 @@ import {
   DepositWatchRequest, 
   DepositWatchResponse, 
   DepositMonitorWebhookPayload,
-  SupportedNetwork 
+  SupportedNetwork,
+  ForwardRequest 
 } from '../types';
 import { WalletService } from './wallet.service';
+import { ForwarderService } from './forwarder.service';
 import { ethers } from 'ethers';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { config } from '../config';
@@ -27,6 +29,7 @@ export class DepositWatchService extends EventEmitter {
   private static instance: DepositWatchService;
   private prisma: PrismaClient;
   private walletService: WalletService;
+  private forwarderService: ForwarderService;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private readonly MONITORING_INTERVAL_MS = 30000; // 30 seconds
   private readonly REQUIRED_CONFIRMATIONS = 5;
@@ -37,6 +40,7 @@ export class DepositWatchService extends EventEmitter {
     super();
     this.prisma = new PrismaClient();
     this.walletService = WalletService.getInstance();
+    this.forwarderService = ForwarderService.getInstance();
     this.startMonitoring();
   }
 
@@ -82,6 +86,7 @@ export class DepositWatchService extends EventEmitter {
           data: {
             expectedAmount: request.expectedAmount,
             webhookUrl: request.webhookUrl || null,
+            paymentId: request.paymentId || null,
             expiresAt: new Date(Date.now() + this.WATCH_DURATION_HOURS * 60 * 60 * 1000),
             updatedAt: new Date(),
           },
@@ -100,6 +105,7 @@ export class DepositWatchService extends EventEmitter {
           network: request.network,
           expectedAmount: request.expectedAmount,
           webhookUrl: request.webhookUrl || null,
+          paymentId: request.paymentId || null,
           expiresAt,
           status: 'ACTIVE',
         },
@@ -364,13 +370,40 @@ export class DepositWatchService extends EventEmitter {
    */
   private async handleConfirmedDeposit(watch: any, txHash: string, actualAmount: string): Promise<void> {
     let webhookSent = false;
+    let forwardingSuccessful = false;
     
     try {
       console.log(`🎉 DEPOSIT CONFIRMED for watch ${watch.id}!`);
       console.log(`💰 Amount: ${actualAmount} on ${watch.network}`);
       console.log(`📊 Transaction: ${txHash}`);
 
-      // Send confirmed webhook FIRST (before database update)
+      // Step 1: Auto-forward funds to master wallet IMMEDIATELY after confirmation
+      try {
+        console.log(`🚀 Auto-forwarding ${actualAmount} USDT on ${watch.network} to master wallet...`);
+        
+        const forwardingResult = await this.autoForwardDeposit(
+          watch.userId,
+          watch.network,
+          actualAmount,
+          watch.address,
+          txHash
+        );
+        
+        if (forwardingResult.success) {
+          forwardingSuccessful = true;
+          console.log(`✅ Auto-forward successful: ${forwardingResult.txHash}`);
+          console.log(`💰 User wallet ${watch.address} balance reset to 0`);
+        } else {
+          console.error(`❌ Auto-forward failed: ${forwardingResult.error}`);
+          // Continue with webhook even if forwarding failed - user should be notified
+        }
+      } catch (forwardError) {
+        const errorMessage = forwardError instanceof Error ? forwardError.message : 'Unknown forwarding error';
+        console.error(`❌ Auto-forwarding error for watch ${watch.id}:`, errorMessage);
+        // Continue with webhook even if forwarding failed
+      }
+
+      // Step 2: Send confirmed webhook (after forwarding attempt)
       if (watch.webhookUrl && !watch.webhookSent) {
         try {
           await this.sendWebhookWithHealthCheck(watch, 'CONFIRMED', txHash, actualAmount);
@@ -483,6 +516,7 @@ export class DepositWatchService extends EventEmitter {
       txHash: txHash || null,
       timestamp: new Date().toISOString(),
       watchId: watch.id,
+      paymentId: watch.paymentId || undefined,
     };
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -1259,6 +1293,137 @@ export class DepositWatchService extends EventEmitter {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`❌ Error force-stopping watch ${watch.id}:`, errorMessage);
+    }
+  }
+
+  /**
+   * Auto-forward confirmed deposit to master wallet
+   */
+  private async autoForwardDeposit(
+    userId: string,
+    network: string,
+    amount: string,
+    userWalletAddress: string,
+    depositTxHash: string
+  ): Promise<{ success: boolean; txHash?: string; error?: string }> {
+    try {
+      console.log(`💰 Auto-forwarding ${amount} USDT on ${network} from ${userWalletAddress} to master wallet`);
+
+      // Get user wallets to access private keys
+      const userWallets = await this.walletService.getUserWallets(userId);
+      if (!userWallets) {
+        throw new Error('User wallets not found');
+      }
+
+      // Get the private key for the network
+      let privateKey: string;
+      switch (network.toLowerCase()) {
+        case 'ethereum':
+          privateKey = userWallets.ethereum.privateKey;
+          break;
+        case 'bsc':
+          privateKey = userWallets.bsc.privateKey;
+          break;
+        case 'polygon':
+          privateKey = userWallets.polygon.privateKey;
+          break;
+        case 'solana':
+          privateKey = userWallets.solana.privateKey;
+          break;
+        case 'tron':
+          privateKey = userWallets.tron.privateKey;
+          break;
+        default:
+          throw new Error(`Unsupported network for forwarding: ${network}`);
+      }
+
+      // Get master wallet address for the network
+      const masterWallet = config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets];
+      if (!masterWallet) {
+        throw new Error(`Master wallet not configured for network: ${network}`);
+      }
+
+      // Create forward request
+      const forwardRequest: ForwardRequest = {
+        userId: userId,
+        network: network,
+        amount: amount,
+        fromWallet: userWalletAddress,
+        privateKey: privateKey,
+        fromPrivateKey: privateKey,
+        toAddress: masterWallet,
+        masterWallet: masterWallet,
+      };
+
+      // Validate and execute forward
+      this.forwarderService.validateForwardRequest(forwardRequest);
+      const forwardResult = await this.forwarderService.forwardFunds(forwardRequest);
+
+      if (forwardResult.success) {
+        console.log(`✅ Auto-forward successful: ${forwardResult.txHash}`);
+        
+        // Store forward transaction in database (optional)
+        try {
+          await this.prisma.forwardTransaction.create({
+            data: {
+              depositId: depositTxHash, // Using depositTxHash as reference
+              forwardTxHash: forwardResult.txHash!,
+              network: network,
+              amount: amount,
+              status: 'COMPLETED',
+            },
+          });
+          console.log(`📝 Forward transaction recorded in database`);
+        } catch (dbError) {
+          console.warn(`⚠️ Failed to record forward transaction in database:`, dbError);
+          // Don't fail the forwarding if database storage fails
+        }
+
+        const result: { success: boolean; txHash?: string; error?: string } = {
+          success: true,
+        };
+        if (forwardResult.txHash) {
+          result.txHash = forwardResult.txHash;
+        }
+        return result;
+      } else {
+        console.error(`❌ Auto-forward failed: ${forwardResult.error}`);
+        
+        // Store failed forward attempt (optional)
+        try {
+          const failedTxData: any = {
+            depositId: depositTxHash,
+            forwardTxHash: '',
+            network: network,
+            amount: amount,
+            status: 'FAILED',
+          };
+          if (forwardResult.error) {
+            failedTxData.error = forwardResult.error;
+          }
+          await this.prisma.forwardTransaction.create({
+            data: failedTxData,
+          });
+        } catch (dbError) {
+          console.warn(`⚠️ Failed to record failed forward transaction:`, dbError);
+        }
+
+        const result: { success: boolean; txHash?: string; error?: string } = {
+          success: false,
+        };
+        if (forwardResult.error) {
+          result.error = forwardResult.error;
+        }
+        return result;
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`❌ Auto-forward error:`, errorMessage);
+      
+      return {
+        success: false,
+        error: errorMessage,
+      };
     }
   }
 

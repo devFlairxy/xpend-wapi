@@ -71,6 +71,7 @@ export interface DepositWatchRequest {
   network: SupportedNetwork;
   expectedAmount: string;
   webhookUrl?: string;
+  paymentId?: string; // Optional payment ID from credo for linking deposit to specific request
 }
 
 export interface DepositWatchResponse {
@@ -97,6 +98,7 @@ export interface DepositMonitorWebhookPayload {
   txHash: string | null;
   timestamp: string;
   watchId: string;
+  paymentId?: string; // Payment ID from credo for linking deposit to specific request
 }
 
 export type WatchStatus = 'ACTIVE' | 'CONFIRMED' | 'EXPIRED' | 'INACTIVE';
