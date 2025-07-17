@@ -115,6 +115,7 @@ model DepositWatch {
   userId            String
   address           String
   network           String
+  token             String   @default("USDT") // Specific token to watch for (USDT, BUSD, etc.)
   expectedAmount    String   // Expected deposit amount
   actualAmount      String?  // Actual amount received (if any)
   confirmations     Int      @default(0)

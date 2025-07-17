@@ -868,16 +868,23 @@ export class DepositWatchService extends EventEmitter {
   }
 
   /**
-   * Check BSC deposits using real blockchain queries (also handles BUSD)
+   * Check BSC deposits using real blockchain queries (handles both USDT and BUSD)
    */
   private async checkBSCDeposits(watch: any): Promise<void> {
     try {
       const provider = new ethers.JsonRpcProvider(config.chains.bsc.rpcUrl);
       
-      // Use BUSD contract for BUSD network, USDT contract for BSC network
-      const contractAddress = watch.network.toLowerCase() === 'busd' 
-        ? config.chains.busd.usdtContract 
-        : config.chains.bsc.usdtContract;
+      // Determine which token contract to check based on the watch token field
+      let contractAddress: string;
+      let tokenName: string;
+      
+      if (watch.token && watch.token.toLowerCase() === 'busd') {
+        contractAddress = config.chains.busd.usdtContract; // BUSD contract
+        tokenName = 'BUSD';
+      } else {
+        contractAddress = config.chains.bsc.usdtContract; // USDT contract
+        tokenName = 'USDT';
+      }
       
       const contract = new ethers.Contract(contractAddress, USDT_ABI, provider);
       
@@ -886,11 +893,12 @@ export class DepositWatchService extends EventEmitter {
       const balance = await balanceMethod(watch.address);
       const balanceFormatted = parseFloat(ethers.formatUnits(balance, 18)); // Both BSC USDT and BUSD have 18 decimals
       
-      const balanceKey = `${watch.network.toLowerCase()}_${watch.address}`;
+      // Use token-specific balance key to track different tokens separately
+      const balanceKey = `bsc_${watch.token.toLowerCase()}_${watch.address}`;
       const lastKnownBalance = this.lastKnownBalances.get(balanceKey) || 0;
       
-      const tokenName = watch.network.toLowerCase() === 'busd' ? 'BUSD' : 'USDT';
       console.log(`💰 BSC ${tokenName} balance for ${watch.address}: ${balanceFormatted} (was: ${lastKnownBalance})`);
+      console.log(`🎯 Watching for: ${watch.expectedAmount} ${tokenName} (token: ${watch.token})`);
       
       if (balanceFormatted > lastKnownBalance) {
         const depositAmount = balanceFormatted - lastKnownBalance;
@@ -900,7 +908,10 @@ export class DepositWatchService extends EventEmitter {
         
         const expectedAmount = parseFloat(watch.expectedAmount);
         if (Math.abs(depositAmount - expectedAmount) < 0.01) {
+          console.log(`✅ Deposit amount ${depositAmount} ${tokenName} matches expected ${expectedAmount} ${tokenName}`);
           await this.handleDepositFound(watch, depositAmount.toString());
+        } else {
+          console.log(`⚠️ Deposit amount ${depositAmount} ${tokenName} doesn't match expected ${expectedAmount} ${tokenName}`);
         }
       } else {
         this.lastKnownBalances.set(balanceKey, balanceFormatted);
