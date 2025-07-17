@@ -5,7 +5,6 @@ import {
   DepositWatchRequest, 
   DepositWatchResponse, 
   DepositMonitorWebhookPayload,
-  SupportedNetwork,
   ForwardRequest 
 } from '../types';
 import { WalletService } from './wallet.service';
@@ -52,23 +51,19 @@ export class DepositWatchService extends EventEmitter {
   }
 
   /**
-   * Start watching a user's wallet for deposits
+   * Start watching for a deposit on a specific network
    */
   public async startDepositWatch(request: DepositWatchRequest): Promise<DepositWatchResponse> {
     try {
-      console.log('Starting deposit watch:', request);
+      console.log(`Starting deposit watch for user ${request.userId} on ${request.network}`);
 
       // Get the user's wallet address for the network
-      const userWallets = await this.walletService.getUserWallets(request.userId);
-      if (!userWallets) {
-        throw new Error('User wallets not found');
+      const walletInfo = await this.walletService.getDisposableWallet(request.userId, request.network);
+      if (!walletInfo) {
+        throw new Error(`No wallet found for user ${request.userId} on network ${request.network}`);
       }
 
-      // Get the address for the specific network
-      const address = this.getAddressForNetwork(userWallets, request.network);
-      if (!address) {
-        throw new Error(`Address not found for network: ${request.network}`);
-      }
+      const address = walletInfo.address;
 
       // Check if there's already an active watch for this user/network
       const existingWatch = await this.prisma.depositWatch.findFirst({
@@ -101,8 +96,10 @@ export class DepositWatchService extends EventEmitter {
       const depositWatch = await this.prisma.depositWatch.create({
         data: {
           userId: request.userId,
+          walletId: walletInfo.id, // Link to the disposable wallet
           address: address,
           network: request.network,
+          token: request.network === 'busd' ? 'BUSD' : 'USDT', // Set appropriate token
           expectedAmount: request.expectedAmount,
           webhookUrl: request.webhookUrl || null,
           paymentId: request.paymentId || null,
@@ -657,8 +654,7 @@ export class DepositWatchService extends EventEmitter {
    */
   private generateWebhookSignature(payload: DepositMonitorWebhookPayload): string {
     const crypto = require('crypto');
-    // FIX: Use SHARED_SECRET instead of WEBHOOK_SECRET to match credo bot expectations
-    const secret = process.env['SHARED_SECRET'] || process.env['WEBHOOK_SECRET'] || 'default-secret';
+    const secret = process.env['WEBHOOK_SECRET'] || 'default-secret';
     const payloadString = JSON.stringify(payload);
     
     // Create HMAC-SHA256 signature
@@ -736,28 +732,6 @@ export class DepositWatchService extends EventEmitter {
   }
 
   /**
-   * Get address for specific network from user wallets
-   */
-  private getAddressForNetwork(userWallets: any, network: SupportedNetwork): string | null {
-    switch (network) {
-      case 'ethereum':
-        return userWallets.ethereum.address;
-      case 'bsc':
-        return userWallets.bsc.address;
-      case 'polygon':
-        return userWallets.polygon.address;
-      case 'solana':
-        return userWallets.solana.address;
-      case 'tron':
-        return userWallets.tron.address;
-      case 'busd':
-        return userWallets.busd.address; // Add BUSD address
-      default:
-        return null;
-    }
-  }
-
-  /**
    * Format database watch record to response format
    */
   private formatWatchResponse(watch: any): DepositWatchResponse {
@@ -832,102 +806,44 @@ export class DepositWatchService extends EventEmitter {
   }
 
   /**
-   * Check Ethereum deposits using transaction-based detection (prevents snipping attacks)
+   * Check Ethereum deposits using real blockchain queries
    */
   private async checkEthereumDeposits(watch: any): Promise<void> {
     try {
       const provider = new ethers.JsonRpcProvider(config.chains.ethereum.rpcUrl);
       const usdtContract = new ethers.Contract(config.chains.ethereum.usdtContract, USDT_ABI, provider);
       
-      // SECURITY FIX: Use transaction-based detection instead of balance-based
-      const currentBlock = await provider.getBlockNumber();
-      const lastScannedBlock = watch.lastScannedBlock || currentBlock - 1000; // Default to last 1000 blocks
+      const balanceMethod = usdtContract['balanceOf'];
+      if (!balanceMethod) throw new Error('balanceOf method not found');
+      const balance = await balanceMethod(watch.address);
+      const balanceFormatted = parseFloat(ethers.formatUnits(balance, 6)); // USDT has 6 decimals
       
-      console.log(`🔍 Scanning Ethereum USDT transactions for ${watch.address} from block ${lastScannedBlock} to ${currentBlock}`);
-
-      // Get Transfer events to this wallet address
-      const transferFilter = usdtContract.filters && usdtContract.filters['Transfer'] ? 
-        usdtContract.filters['Transfer'](null, watch.address) : undefined;
+      const balanceKey = `ethereum_${watch.address}`;
+      const lastKnownBalance = this.lastKnownBalances.get(balanceKey) || 0;
       
-      if (!transferFilter) {
-        console.error('Transfer filter is undefined');
-        return;
-      }
+      console.log(`💰 Ethereum USDT balance for ${watch.address}: ${balanceFormatted} (was: ${lastKnownBalance})`);
       
-      const events = await usdtContract.queryFilter(transferFilter, lastScannedBlock, currentBlock);
-
-      // Process each transfer event
-      for (const event of events) {
-        if ('args' in event && event.args && typeof event.args['to'] === 'string' && typeof event.args['value'] !== 'undefined') {
-          const toAddress = event.args['to'] as string;
-          const value = event.args['value'] as bigint;
-          
-          if (toAddress.toLowerCase() === watch.address.toLowerCase()) {
-            const depositAmount = parseFloat(ethers.formatUnits(value, 6)); // Ethereum USDT has 6 decimals
-            
-            console.log(`🎯 Found Ethereum USDT transfer: ${depositAmount} USDT in tx ${event.transactionHash}`);
-
-            // Check if this transaction has already been processed
-            const existingDeposit = await this.prisma.deposit.findUnique({
-              where: { txId: event.transactionHash }
-            });
-            
-            if (existingDeposit) {
-              console.log(`⏭️ Transaction ${event.transactionHash} already processed, skipping`);
-              continue;
-            }
-
-            // Check if deposit amount matches expected amount
-            const expectedAmount = parseFloat(watch.expectedAmount);
-            if (Math.abs(depositAmount - expectedAmount) < 0.01) {
-              console.log(`✅ Deposit amount ${depositAmount} USDT matches expected ${expectedAmount} USDT`);
-              
-              // Store the deposit transaction to prevent double processing
-              await this.prisma.deposit.create({
-                data: {
-                  userId: watch.userId,
-                  userWalletId: 'temp-id', // Will be updated when we have proper wallet ID
-                  amount: depositAmount.toString(),
-                  currency: 'USDT',
-                  network: watch.network,
-                  txId: event.transactionHash,
-                  wallet: watch.address,
-                  confirmations: 0,
-                  status: 'PENDING',
-                  webhookSent: false,
-                  createdAt: new Date(),
-                  updatedAt: new Date()
-                }
-              });
-              
-              console.log(`💾 Stored deposit transaction ${event.transactionHash} to prevent double processing`);
-              
-              // Process the confirmed deposit
-              await this.handleConfirmedDeposit(watch, event.transactionHash, depositAmount.toString());
-            } else {
-              console.log(`⚠️ Deposit amount ${depositAmount} USDT doesn't match expected ${expectedAmount} USDT`);
-            }
-          }
+      if (balanceFormatted > lastKnownBalance) {
+        const depositAmount = balanceFormatted - lastKnownBalance;
+        console.log(`🎯 Found Ethereum deposit: ${depositAmount} USDT!`);
+        
+        this.lastKnownBalances.set(balanceKey, balanceFormatted);
+        
+        const expectedAmount = parseFloat(watch.expectedAmount);
+        if (Math.abs(depositAmount - expectedAmount) < 0.01) {
+          await this.handleDepositFound(watch, depositAmount.toString());
         }
+      } else {
+        this.lastKnownBalances.set(balanceKey, balanceFormatted);
+        console.log(`⏳ No new Ethereum deposits for watch ${watch.id}`);
       }
-
-      // Update the last scanned block to prevent re-scanning
-      await this.prisma.depositWatch.update({
-        where: { id: watch.id },
-        data: { 
-          lastScannedBlock: currentBlock,
-          updatedAt: new Date()
-        }
-      });
-
-      console.log(`✅ Ethereum USDT scan completed for watch ${watch.id}`);
     } catch (error) {
       console.error(`❌ Error checking Ethereum deposits for watch ${watch.id}:`, error);
     }
   }
 
   /**
-   * Check BSC deposits using transaction-based detection (prevents snipping attacks)
+   * Check BSC deposits using real blockchain queries (handles both USDT and BUSD)
    */
   private async checkBSCDeposits(watch: any): Promise<void> {
     try {
@@ -947,185 +863,72 @@ export class DepositWatchService extends EventEmitter {
       
       const contract = new ethers.Contract(contractAddress, USDT_ABI, provider);
       
-      // SECURITY FIX: Use transaction-based detection instead of balance-based
-      // This prevents the "snipping" attack where users send additional deposits
-      const currentBlock = await provider.getBlockNumber();
-      const lastScannedBlock = watch.lastScannedBlock || currentBlock - 1000; // Default to last 1000 blocks
+      const balanceMethod = contract['balanceOf'];
+      if (!balanceMethod) throw new Error('balanceOf method not found');
+      const balance = await balanceMethod(watch.address);
+      const balanceFormatted = parseFloat(ethers.formatUnits(balance, 18)); // Both BSC USDT and BUSD have 18 decimals
       
-      console.log(`🔍 Scanning BSC ${tokenName} transactions for ${watch.address} from block ${lastScannedBlock} to ${currentBlock}`);
+      // Use token-specific balance key to track different tokens separately
+      const balanceKey = `bsc_${watch.token.toLowerCase()}_${watch.address}`;
+      const lastKnownBalance = this.lastKnownBalances.get(balanceKey) || 0;
       
-      // Get Transfer events to this wallet address
-      const transferFilter = contract.filters && contract.filters['Transfer'] ? 
-        contract.filters['Transfer'](null, watch.address) : undefined;
+      console.log(`💰 BSC ${tokenName} balance for ${watch.address}: ${balanceFormatted} (was: ${lastKnownBalance})`);
+      console.log(`🎯 Watching for: ${watch.expectedAmount} ${tokenName} (token: ${watch.token})`);
       
-      if (!transferFilter) {
-        console.error('Transfer filter is undefined');
-        return;
-      }
-      
-      const events = await contract.queryFilter(transferFilter, lastScannedBlock, currentBlock);
-      
-      // Process each transfer event
-      for (const event of events) {
-        if ('args' in event && event.args && typeof event.args['to'] === 'string' && typeof event.args['value'] !== 'undefined') {
-          const toAddress = event.args['to'] as string;
-          const value = event.args['value'] as bigint;
-          
-          if (toAddress.toLowerCase() === watch.address.toLowerCase()) {
-            const depositAmount = parseFloat(ethers.formatUnits(value, 18)); // Both BSC USDT and BUSD have 18 decimals
-            
-            console.log(`🎯 Found BSC ${tokenName} transfer: ${depositAmount} ${tokenName} in tx ${event.transactionHash}`);
-            
-            // Check if this transaction has already been processed
-            const existingDeposit = await this.prisma.deposit.findUnique({
-              where: { txId: event.transactionHash }
-            });
-            
-            if (existingDeposit) {
-              console.log(`⏭️ Transaction ${event.transactionHash} already processed, skipping`);
-              continue;
-            }
-            
-            // Check if deposit amount matches expected amount
-            const expectedAmount = parseFloat(watch.expectedAmount);
-            if (Math.abs(depositAmount - expectedAmount) < 0.01) {
-              console.log(`✅ Deposit amount ${depositAmount} ${tokenName} matches expected ${expectedAmount} ${tokenName}`);
-              
-              // Store the deposit transaction to prevent double processing
-              await this.prisma.deposit.create({
-                data: {
-                  userId: watch.userId,
-                  userWalletId: 'temp-id', // Will be updated when we have proper wallet ID
-                  amount: depositAmount.toString(),
-                  currency: tokenName,
-                  network: watch.network,
-                  txId: event.transactionHash,
-                  wallet: watch.address,
-                  confirmations: 0,
-                  status: 'PENDING',
-                  webhookSent: false,
-                  createdAt: new Date(),
-                  updatedAt: new Date()
-                }
-              });
-              
-              console.log(`💾 Stored deposit transaction ${event.transactionHash} to prevent double processing`);
-              
-              // Process the confirmed deposit
-              await this.handleConfirmedDeposit(watch, event.transactionHash, depositAmount.toString());
-            } else {
-              console.log(`⚠️ Deposit amount ${depositAmount} ${tokenName} doesn't match expected ${expectedAmount} ${tokenName}`);
-            }
-          }
+      if (balanceFormatted > lastKnownBalance) {
+        const depositAmount = balanceFormatted - lastKnownBalance;
+        console.log(`🎯 Found BSC ${tokenName} deposit: ${depositAmount} ${tokenName}!`);
+        
+        this.lastKnownBalances.set(balanceKey, balanceFormatted);
+        
+        const expectedAmount = parseFloat(watch.expectedAmount);
+        if (Math.abs(depositAmount - expectedAmount) < 0.01) {
+          console.log(`✅ Deposit amount ${depositAmount} ${tokenName} matches expected ${expectedAmount} ${tokenName}`);
+          await this.handleDepositFound(watch, depositAmount.toString());
+        } else {
+          console.log(`⚠️ Deposit amount ${depositAmount} ${tokenName} doesn't match expected ${expectedAmount} ${tokenName}`);
         }
+      } else {
+        this.lastKnownBalances.set(balanceKey, balanceFormatted);
+        console.log(`⏳ No new BSC ${tokenName} deposits for watch ${watch.id}`);
       }
-      
-      // Update the last scanned block to prevent re-scanning
-      await this.prisma.depositWatch.update({
-        where: { id: watch.id },
-        data: { 
-          lastScannedBlock: currentBlock,
-          updatedAt: new Date()
-        }
-      });
-      
-      console.log(`✅ BSC ${tokenName} scan completed for watch ${watch.id}`);
-      
     } catch (error) {
       console.error(`❌ Error checking BSC deposits for watch ${watch.id}:`, error);
     }
   }
 
   /**
-   * Check Polygon deposits using transaction-based detection (prevents snipping attacks)
+   * Check Polygon deposits using real blockchain queries
    */
   private async checkPolygonDeposits(watch: any): Promise<void> {
     try {
       const provider = new ethers.JsonRpcProvider(config.chains.polygon.rpcUrl);
       const usdtContract = new ethers.Contract(config.chains.polygon.usdtContract, USDT_ABI, provider);
       
-      // SECURITY FIX: Use transaction-based detection instead of balance-based
-      const currentBlock = await provider.getBlockNumber();
-      const lastScannedBlock = watch.lastScannedBlock || currentBlock - 1000; // Default to last 1000 blocks
+      const balanceMethod = usdtContract['balanceOf'];
+      if (!balanceMethod) throw new Error('balanceOf method not found');
+      const balance = await balanceMethod(watch.address);
+      const balanceFormatted = parseFloat(ethers.formatUnits(balance, 6)); // Polygon USDT has 6 decimals
       
-      console.log(`🔍 Scanning Polygon USDT transactions for ${watch.address} from block ${lastScannedBlock} to ${currentBlock}`);
-
-      // Get Transfer events to this wallet address
-      const transferFilter = usdtContract.filters && usdtContract.filters['Transfer'] ? 
-        usdtContract.filters['Transfer'](null, watch.address) : undefined;
+      const balanceKey = `polygon_${watch.address}`;
+      const lastKnownBalance = this.lastKnownBalances.get(balanceKey) || 0;
       
-      if (!transferFilter) {
-        console.error('Transfer filter is undefined');
-        return;
-      }
+      console.log(`💰 Polygon USDT balance for ${watch.address}: ${balanceFormatted} (was: ${lastKnownBalance})`);
       
-      const events = await usdtContract.queryFilter(transferFilter, lastScannedBlock, currentBlock);
-
-      // Process each transfer event
-      for (const event of events) {
-        if ('args' in event && event.args && typeof event.args['to'] === 'string' && typeof event.args['value'] !== 'undefined') {
-          const toAddress = event.args['to'] as string;
-          const value = event.args['value'] as bigint;
-          
-          if (toAddress.toLowerCase() === watch.address.toLowerCase()) {
-            const depositAmount = parseFloat(ethers.formatUnits(value, 6)); // Polygon USDT has 6 decimals
-            
-            console.log(`🎯 Found Polygon USDT transfer: ${depositAmount} USDT in tx ${event.transactionHash}`);
-
-            // Check if this transaction has already been processed
-            const existingDeposit = await this.prisma.deposit.findUnique({
-              where: { txId: event.transactionHash }
-            });
-            
-            if (existingDeposit) {
-              console.log(`⏭️ Transaction ${event.transactionHash} already processed, skipping`);
-              continue;
-            }
-
-            // Check if deposit amount matches expected amount
-            const expectedAmount = parseFloat(watch.expectedAmount);
-            if (Math.abs(depositAmount - expectedAmount) < 0.01) {
-              console.log(`✅ Deposit amount ${depositAmount} USDT matches expected ${expectedAmount} USDT`);
-              
-              // Store the deposit transaction to prevent double processing
-              await this.prisma.deposit.create({
-                data: {
-                  userId: watch.userId,
-                  userWalletId: 'temp-id', // Will be updated when we have proper wallet ID
-                  amount: depositAmount.toString(),
-                  currency: 'USDT',
-                  network: watch.network,
-                  txId: event.transactionHash,
-                  wallet: watch.address,
-                  confirmations: 0,
-                  status: 'PENDING',
-                  webhookSent: false,
-                  createdAt: new Date(),
-                  updatedAt: new Date()
-                }
-              });
-              
-              console.log(`💾 Stored deposit transaction ${event.transactionHash} to prevent double processing`);
-              
-              // Process the confirmed deposit
-              await this.handleConfirmedDeposit(watch, event.transactionHash, depositAmount.toString());
-            } else {
-              console.log(`⚠️ Deposit amount ${depositAmount} USDT doesn't match expected ${expectedAmount} USDT`);
-            }
-          }
+      if (balanceFormatted > lastKnownBalance) {
+        const depositAmount = balanceFormatted - lastKnownBalance;
+        console.log(`🎯 Found Polygon deposit: ${depositAmount} USDT!`);
+        
+        this.lastKnownBalances.set(balanceKey, balanceFormatted);
+        
+        const expectedAmount = parseFloat(watch.expectedAmount);
+        if (Math.abs(depositAmount - expectedAmount) < 0.01) {
+          await this.handleDepositFound(watch, depositAmount.toString());
         }
+      } else {
+        this.lastKnownBalances.set(balanceKey, balanceFormatted);
+        console.log(`⏳ No new Polygon deposits for watch ${watch.id}`);
       }
-
-      // Update the last scanned block to prevent re-scanning
-      await this.prisma.depositWatch.update({
-        where: { id: watch.id },
-        data: { 
-          lastScannedBlock: currentBlock,
-          updatedAt: new Date()
-        }
-      });
-
-      console.log(`✅ Polygon USDT scan completed for watch ${watch.id}`);
     } catch (error) {
       console.error(`❌ Error checking Polygon deposits for watch ${watch.id}:`, error);
     }
@@ -1502,36 +1305,13 @@ export class DepositWatchService extends EventEmitter {
     try {
       console.log(`💰 Auto-forwarding ${amount} USDT on ${network} from ${userWalletAddress} to master wallet`);
 
-      // Get user wallets to access private keys
-      const userWallets = await this.walletService.getUserWallets(userId);
-      if (!userWallets) {
-        throw new Error('User wallets not found');
+      // Get the disposable wallet for the specific network
+      const walletInfo = await this.walletService.getDisposableWallet(userId, network);
+      if (!walletInfo) {
+        throw new Error(`No wallet found for user ${userId} on network ${network}`);
       }
 
-      // Get the private key for the network
-      let privateKey: string;
-      switch (network.toLowerCase()) {
-        case 'ethereum':
-          privateKey = userWallets.ethereum.privateKey;
-          break;
-        case 'bsc':
-          privateKey = userWallets.bsc.privateKey;
-          break;
-        case 'polygon':
-          privateKey = userWallets.polygon.privateKey;
-          break;
-        case 'solana':
-          privateKey = userWallets.solana.privateKey;
-          break;
-        case 'tron':
-          privateKey = userWallets.tron.privateKey;
-          break;
-        case 'busd':
-          privateKey = userWallets.bsc.privateKey; // BUSD uses same wallet as BSC
-          break;
-        default:
-          throw new Error(`Unsupported network for forwarding: ${network}`);
-      }
+      const privateKey = walletInfo.privateKey;
 
       // Get master wallet address for the network
       const masterWallet = config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets];

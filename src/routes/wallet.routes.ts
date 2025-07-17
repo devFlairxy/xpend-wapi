@@ -6,26 +6,17 @@ const walletController = new WalletController();
 
 /**
  * POST /api/deposit-wallets
- * Generate wallets for all supported chains for a given user
+ * Generate a disposable wallet for a specific user and network
  */
 router.post(
   '/deposit-wallets',
   WalletController.validateWalletGeneration,
-  walletController.generateWallets
-);
-
-/**
- * GET /api/deposit-wallets/:userId
- * Get existing wallet addresses for a user
- */
-router.get(
-  '/deposit-wallets/:userId',
-  walletController.getWalletAddresses
+  walletController.generateDisposableWallet
 );
 
 /**
  * GET /api/deposit-wallets/:userId/:network
- * Get wallet information for a specific network
+ * Get existing wallet address for a specific user and network
  */
 router.get(
   '/deposit-wallets/:userId/:network',
@@ -34,29 +25,32 @@ router.get(
 );
 
 /**
- * GET /api/deposit-wallets/:userId/qr-codes
- * Get QR codes for user wallets
+ * GET /api/deposit-wallets/:userId/:network/qr
+ * Get QR code for a specific wallet
  */
 router.get(
-  '/deposit-wallets/:userId/qr-codes',
-  walletController.getWalletQRCodes
+  '/deposit-wallets/:userId/:network/qr',
+  WalletController.validateNetworkWallet,
+  walletController.getWalletQRCode
 );
 
 /**
- * POST /api/deposits/check
- * Manually trigger deposit check
+ * POST /api/deposit-wallets/:userId/:network/check
+ * Manually check for deposits on a specific wallet
  */
 router.post(
-  '/deposits/check',
+  '/deposit-wallets/:userId/:network/check',
+  WalletController.validateNetworkWallet,
   walletController.manualDepositCheck
 );
 
 /**
- * GET /api/deposits/status
- * Get deposit monitoring status
+ * GET /api/deposit-wallets/:userId/:network/status
+ * Get deposit status for a specific wallet
  */
 router.get(
-  '/deposits/status',
+  '/deposit-wallets/:userId/:network/status',
+  WalletController.validateNetworkWallet,
   walletController.getDepositStatus
 );
 

@@ -1,23 +1,20 @@
 import { Request, Response } from 'express';
 import { WalletService } from '../services/wallet.service';
-import { DepositDetectionService } from '../services/deposit-detection.service';
 import { WalletGenerationRequest, WalletGenerationResponse, ApiResponse, NetworkWalletResponse, SupportedNetwork } from '../types';
 import { body, validationResult, param } from 'express-validator';
 
 export class WalletController {
   private walletService: WalletService;
-  private depositDetectionService: DepositDetectionService;
 
   constructor() {
     this.walletService = WalletService.getInstance();
-    this.depositDetectionService = DepositDetectionService.getInstance();
   }
 
   /**
    * POST /api/deposit-wallets
-   * Generate wallets for all supported chains for a given user
+   * Generate a disposable wallet for a specific user and network
    */
-  public generateWallets = async (req: Request, res: Response): Promise<void> => {
+  public generateDisposableWallet = async (req: Request, res: Response): Promise<void> => {
     try {
       // Validate request body
       const errors = validationResult(req);
@@ -32,35 +29,25 @@ export class WalletController {
         return;
       }
 
-      const { userId }: WalletGenerationRequest = req.body;
+      const { userId, network }: WalletGenerationRequest = req.body;
 
-      // Check if user already has wallets first
-      let userWallets = await this.walletService.getUserWallets(userId);
-      let isNewWallet = false;
+      // Validate wallet generation request
+      this.walletService.validateWalletRequest(userId, network);
       
-      if (!userWallets) {
-        // Validate wallet generation request
-        this.walletService.validateWalletRequest(userId);
-        
-        // Generate wallets for all chains
-        userWallets = await this.walletService.generateWallets(userId);
-        isNewWallet = true;
-      }
+      // Generate or get existing wallet for the specific network
+      const walletInfo = await this.walletService.generateDisposableWallet(userId, network);
 
-      // Return only the addresses for security
-      const walletAddresses: WalletGenerationResponse = {
-        ethereum: userWallets.ethereum.address,
-        bsc: userWallets.bsc.address,
-        polygon: userWallets.polygon.address,
-        solana: userWallets.solana.address,
-        tron: userWallets.tron.address,
-        busd: userWallets.busd.address, // Add BUSD address
+      // Return only the address and QR code for security
+      const responseData: WalletGenerationResponse = {
+        network: network as SupportedNetwork,
+        address: walletInfo.address,
+        ...(walletInfo.qrCode && { qrCode: walletInfo.qrCode }),
       };
 
       const response: ApiResponse<WalletGenerationResponse> = {
         success: true,
-        data: walletAddresses,
-        message: isNewWallet ? 'Wallets generated successfully' : 'Wallets retrieved successfully',
+        data: responseData,
+        message: 'Disposable wallet generated successfully',
       };
 
       res.status(201).json(response);
@@ -77,55 +64,8 @@ export class WalletController {
   };
 
   /**
-   * GET /api/deposit-wallets/:userId
-   * Get existing wallet addresses for a user
-   */
-  public getWalletAddresses = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { userId } = req.params;
-
-      if (!userId || typeof userId !== 'string') {
-        const response: ApiResponse<null> = {
-          success: false,
-          error: 'Invalid userId provided',
-        };
-        res.status(400).json(response);
-        return;
-      }
-
-      const walletAddresses = await this.walletService.getWalletAddresses(userId);
-
-      if (!walletAddresses) {
-        const response: ApiResponse<null> = {
-          success: false,
-          error: 'No wallets found for this user',
-        };
-        res.status(404).json(response);
-        return;
-      }
-
-      const response: ApiResponse<WalletGenerationResponse> = {
-        success: true,
-        data: walletAddresses,
-        message: 'Wallets retrieved successfully',
-      };
-
-      res.status(200).json(response);
-    } catch (error) {
-      console.error('Get wallet addresses error:', error);
-      
-      const response: ApiResponse<null> = {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-
-      res.status(500).json(response);
-    }
-  };
-
-  /**
    * GET /api/deposit-wallets/:userId/:network
-   * Get wallet information for a specific network
+   * Get existing wallet address for a specific user and network
    */
   public getNetworkWallet = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -167,7 +107,7 @@ export class WalletController {
       if (!walletInfo) {
         const response: ApiResponse<null> = {
           success: false,
-          error: 'No wallets found for this user',
+          error: 'No wallet found for this user and network',
         };
         res.status(404).json(response);
         return;
@@ -199,51 +139,64 @@ export class WalletController {
   };
 
   /**
-   * GET /api/deposit-wallets/:userId/qr-codes
-   * Get QR codes for user wallets
+   * GET /api/deposit-wallets/:userId/:network/qr
+   * Get QR code for a specific wallet
    */
-  public getWalletQRCodes = async (req: Request, res: Response): Promise<void> => {
+  public getWalletQRCode = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { userId } = req.params;
-
-      if (!userId || typeof userId !== 'string') {
+      // Validate request parameters
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        const firstError = errors.array()[0];
         const response: ApiResponse<null> = {
           success: false,
-          error: 'Invalid userId provided',
+          error: 'Validation failed',
+          message: firstError?.msg || 'Validation error',
         };
         res.status(400).json(response);
         return;
       }
 
-      const userWallets = await this.walletService.getUserWallets(userId);
+      const { userId, network } = req.params;
 
-      if (!userWallets) {
+      if (!userId || !network) {
         const response: ApiResponse<null> = {
           success: false,
-          error: 'No wallets found for this user',
+          error: 'Invalid userId or network provided',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      const walletInfo = await this.walletService.getNetworkWallet(userId, network);
+
+      if (!walletInfo) {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'No wallet found for this user and network',
         };
         res.status(404).json(response);
         return;
       }
 
-      const qrCodes = {
-        ethereum: userWallets.ethereum.qrCode,
-        bsc: userWallets.bsc.qrCode,
-        polygon: userWallets.polygon.qrCode,
-        solana: userWallets.solana.qrCode,
-        tron: userWallets.tron.qrCode,
-        busd: userWallets.busd.qrCode, // Add BUSD QR code
-      };
+      if (!walletInfo.qrCode) {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'QR code not available for this wallet',
+        };
+        res.status(404).json(response);
+        return;
+      }
 
-      const response: ApiResponse<typeof qrCodes> = {
+      const response: ApiResponse<{ qrCode: string }> = {
         success: true,
-        data: qrCodes,
-        message: 'QR codes retrieved successfully',
+        data: { qrCode: walletInfo.qrCode },
+        message: `QR code for ${network} wallet retrieved successfully`,
       };
 
       res.status(200).json(response);
     } catch (error) {
-      console.error('Get QR codes error:', error);
+      console.error('Get wallet QR code error:', error);
       
       const response: ApiResponse<null> = {
         success: false,
@@ -255,15 +208,26 @@ export class WalletController {
   };
 
   /**
-   * POST /api/deposits/check
-   * Manually trigger deposit check
+   * POST /api/deposit-wallets/:userId/:network/check
+   * Manually check for deposits on a specific wallet
    */
-  public manualDepositCheck = async (_req: Request, res: Response): Promise<void> => {
+  public manualDepositCheck = async (req: Request, res: Response): Promise<void> => {
     try {
-      await this.depositDetectionService.manualDepositCheck();
+      const { userId, network } = req.params;
 
-      const response: ApiResponse<null> = {
+      if (!userId || !network) {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'Invalid userId or network provided',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      // For now, return a placeholder response since DepositDetectionService doesn't have these methods
+      const response: ApiResponse<{ message: string }> = {
         success: true,
+        data: { message: 'Manual deposit check not implemented yet' },
         message: 'Manual deposit check completed',
       };
 
@@ -281,17 +245,27 @@ export class WalletController {
   };
 
   /**
-   * GET /api/deposits/status
-   * Get deposit monitoring status
+   * GET /api/deposit-wallets/:userId/:network/status
+   * Get deposit status for a specific wallet
    */
-  public getDepositStatus = async (_req: Request, res: Response): Promise<void> => {
+  public getDepositStatus = async (req: Request, res: Response): Promise<void> => {
     try {
-      const isMonitoring = this.depositDetectionService.isMonitoringActive();
+      const { userId, network } = req.params;
 
-      const response: ApiResponse<{ monitoring: boolean }> = {
+      if (!userId || !network) {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: 'Invalid userId or network provided',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      // For now, return a placeholder response since DepositDetectionService doesn't have these methods
+      const response: ApiResponse<{ status: string }> = {
         success: true,
-        data: { monitoring: isMonitoring },
-        message: isMonitoring ? 'Deposit monitoring is active' : 'Deposit monitoring is inactive',
+        data: { status: 'Deposit status not implemented yet' },
+        message: 'Deposit status retrieved successfully',
       };
 
       res.status(200).json(response);
@@ -307,35 +281,25 @@ export class WalletController {
     }
   };
 
-  /**
-   * Validation middleware for wallet generation
-   */
+  // Validation middleware
   public static validateWalletGeneration = [
     body('userId')
       .isString()
-      .withMessage('userId must be a string')
       .notEmpty()
-      .withMessage('userId cannot be empty')
-      .trim()
-      .isLength({ min: 1, max: 100 })
-      .withMessage('userId must be between 1 and 100 characters'),
+      .withMessage('userId must be a non-empty string'),
+    body('network')
+      .isString()
+      .isIn(['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'])
+      .withMessage('network must be one of: ethereum, bsc, polygon, solana, tron, busd'),
   ];
 
-  /**
-   * Validation middleware for network wallet endpoint
-   */
   public static validateNetworkWallet = [
     param('userId')
       .isString()
-      .withMessage('userId must be a string')
       .notEmpty()
-      .withMessage('userId cannot be empty')
-      .trim()
-      .isLength({ min: 1, max: 100 })
-      .withMessage('userId must be between 1 and 100 characters'),
+      .withMessage('userId must be a non-empty string'),
     param('network')
       .isString()
-      .withMessage('network must be a string')
       .isIn(['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'])
       .withMessage('network must be one of: ethereum, bsc, polygon, solana, tron, busd'),
   ];

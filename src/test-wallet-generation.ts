@@ -10,37 +10,51 @@ async function testWalletGeneration() {
     const userId = 'test-user-123';
     console.log(`📝 Generating wallets for userId: ${userId}`);
 
-    const userWallets = await walletService.generateWallets(userId);
-
-    console.log('✅ Wallet Generation Results:');
-    console.log(`Ethereum: ${userWallets.ethereum.address}`);
-    console.log(`BSC: ${userWallets.bsc.address}`);
-    console.log(`Polygon: ${userWallets.polygon.address}`);
-    console.log(`Solana: ${userWallets.solana.address}`);
-    console.log(`Tron: ${userWallets.tron.address}`);
+    // Test generating wallets for different networks
+    const networks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'];
+    const generatedWallets: any = {};
+    
+    for (const network of networks) {
+      console.log(`\n📱 Generating ${network} wallet for user ${userId}...`);
+      
+      const wallet = await walletService.generateDisposableWallet(userId, network);
+      generatedWallets[network] = wallet;
+      
+      console.log(`✅ ${network.toUpperCase()} wallet generated:`);
+      console.log(`   Address: ${wallet.address}`);
+      console.log(`   Network: ${wallet.network}`);
+      console.log(`   ID: ${wallet.id}`);
+    }
 
     // Test wallet address retrieval
     console.log('\n🔍 Testing wallet address retrieval...');
-    const addresses = await walletService.getWalletAddresses(userId);
+    const retrievedAddresses: any = {};
     
-    if (addresses && 
-        addresses.ethereum === userWallets.ethereum.address &&
-        addresses.bsc === userWallets.bsc.address &&
-        addresses.polygon === userWallets.polygon.address &&
-        addresses.solana === userWallets.solana.address &&
-        addresses.tron === userWallets.tron.address
-    ) {
-      console.log('✅ Wallet address retrieval test passed');
-    } else {
-      console.log('❌ Wallet address retrieval test failed');
+    for (const network of networks) {
+      const address = await walletService.getWalletAddress(userId, network);
+      retrievedAddresses[network] = address;
+      
+      if (address === generatedWallets[network].address) {
+        console.log(`✅ ${network.toUpperCase()} address retrieval test passed`);
+      } else {
+        console.log(`❌ ${network.toUpperCase()} address retrieval test failed`);
+      }
     }
 
     // Test deterministic generation
     console.log('\n🔄 Testing deterministic generation...');
-    const userWallets2 = await walletService.generateWallets(userId);
-    console.log('Deterministic test:', 
-      userWallets.ethereum.address === userWallets2.ethereum.address
-    );
+    const regeneratedWallets: any = {};
+    
+    for (const network of networks) {
+      const wallet = await walletService.generateDisposableWallet(userId, network);
+      regeneratedWallets[network] = wallet;
+      
+      if (wallet.address === generatedWallets[network].address) {
+        console.log(`✅ ${network.toUpperCase()} deterministic generation test passed`);
+      } else {
+        console.log(`❌ ${network.toUpperCase()} deterministic generation test failed`);
+      }
+    }
 
     console.log('\n🎉 All tests completed successfully!');
 

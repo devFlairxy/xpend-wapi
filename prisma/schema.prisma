@@ -10,52 +10,43 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model UserWallet {
+model DisposableWallet {
   id            String   @id @default(cuid())
-  userId        String   @unique
-  ethereumAddress String
-  ethereumPrivateKey String
-  ethereumDerivationPath String
-  ethereumQrCode String?
-  
-  bscAddress    String
-  bscPrivateKey String
-  bscDerivationPath String
-  bscQrCode     String?
-  
-  polygonAddress String
-  polygonPrivateKey String
-  polygonDerivationPath String
-  polygonQrCode String?
-  
-  solanaAddress String
-  solanaPrivateKey String
-  solanaDerivationPath String
-  solanaQrCode  String?
-  
-  tronAddress   String
-  tronPrivateKey String
-  tronDerivationPath String
-  tronQrCode    String?
-  
+  userId        String
+  network       String   // ethereum, bsc, polygon, solana, tron, busd
+  address       String
+  privateKey    String
+  derivationPath String
+  qrCode        String?
+  isUsed        Boolean  @default(false) // Track if wallet has been used for deposit
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  deposits Deposit[]
+  // Relations
+  deposits      Deposit[]
+  depositWatches DepositWatch[]
 
-  @@map("user_wallets")
+  // Indexes for performance
+  @@unique([userId, network]) // One wallet per user per network
+  @@index([userId])
+  @@index([network])
+  @@index([address])
+  @@index([isUsed])
+  @@index([createdAt])
+
+  @@map("disposable_wallets")
 }
 
 model Deposit {
   id            String   @id @default(cuid())
   userId        String
-  userWalletId  String
-  userWallet    UserWallet @relation(fields: [userWalletId], references: [id])
+  walletId      String
+  wallet        DisposableWallet @relation(fields: [walletId], references: [id])
   amount        String
   currency      String   @default("USDT")
   network       String
   txId          String   @unique
-  wallet        String
+  walletAddress String
   confirmations Int      @default(0)
   status        DepositStatus @default(PENDING)
   webhookSent   Boolean  @default(false)
@@ -113,6 +104,8 @@ model WebhookLog {
 model DepositWatch {
   id                String   @id @default(cuid())
   userId            String
+  walletId          String
+  wallet            DisposableWallet @relation(fields: [walletId], references: [id])
   address           String
   network           String
   token             String   @default("USDT") // Specific token to watch for (USDT, BUSD, etc.)
@@ -125,7 +118,6 @@ model DepositWatch {
   webhookUrl        String?  // URL to send webhook to
   txHash            String?  // Transaction hash if deposit found
   paymentId         String?  // Payment ID from credo for linking to specific deposit request
-  lastScannedBlock  Int?     // Last block number scanned for transaction-based detection
   lastCheckedAt     DateTime @default(now())
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { Keypair } from '@solana/web3.js';
-import { WalletInfo, UserWallets, WalletGenerationError } from '../types';
+import { WalletInfo, WalletGenerationError, SupportedNetwork } from '../types';
 import { config } from '../config';
 import crypto from 'crypto';
 import { DatabaseService } from './database.service';
@@ -8,10 +8,8 @@ import { QRCodeService } from './qr-code.service';
 
 export class WalletService {
   private static instance: WalletService;
-  private userWallets: Map<string, UserWallets> = new Map();
   private databaseService: DatabaseService;
   private qrCodeService: QRCodeService;
-
 
   private constructor() {
     this.databaseService = DatabaseService.getInstance();
@@ -26,145 +24,113 @@ export class WalletService {
   }
 
   /**
-   * Generate wallets for all supported chains for a given user
+   * Generate a disposable wallet for a specific user and network
    */
-  public async generateWallets(userId: string): Promise<UserWallets> {
+  public async generateDisposableWallet(userId: string, network: string): Promise<WalletInfo> {
     try {
-      // Generate deterministic index from userId
-      const index = this.generateIndexFromUserId(userId);
+      // Validate network
+      const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'];
+      if (!supportedNetworks.includes(network)) {
+        throw new WalletGenerationError(
+          `Unsupported network: ${network}. Supported networks: ${supportedNetworks.join(', ')}`,
+          network
+        );
+      }
 
-      // Generate wallets for each chain
-      const ethereumWallet = await this.generateEthereumWallet(userId, index);
-      const bscWallet = await this.generateBSCWallet(userId, index);
-      const polygonWallet = await this.generatePolygonWallet(userId, index);
-      const solanaWallet = await this.generateSolanaWallet(userId);
-      const tronWallet = await this.generateTronWallet(userId, index);
-      // BUSD uses the same wallet as BSC since they're both on BSC network
-      const busdWallet = bscWallet;
+      // Check if wallet already exists for this user and network
+      const existingWallet = await this.databaseService.getDisposableWallet(userId, network);
+      if (existingWallet) {
+        return existingWallet;
+      }
 
-      // Generate QR codes for all addresses
-      const qrCodes = await this.qrCodeService.generateWalletQRCodes({
-        ethereum: ethereumWallet.address,
-        bsc: bscWallet.address,
-        polygon: polygonWallet.address,
-        solana: solanaWallet.address,
-        tron: tronWallet.address,
-        busd: busdWallet.address, // Add BUSD QR code
-      });
+      // Generate deterministic index from userId and network
+      const index = this.generateIndexFromUserIdAndNetwork(userId, network);
 
-      // Add QR codes to wallet info
-      ethereumWallet.qrCode = qrCodes.ethereum;
-      bscWallet.qrCode = qrCodes.bsc;
-      polygonWallet.qrCode = qrCodes.polygon;
-      solanaWallet.qrCode = qrCodes.solana;
-      tronWallet.qrCode = qrCodes.tron;
-      busdWallet.qrCode = qrCodes.busd; // Add BUSD QR code
+      // Generate wallet based on network
+      let walletInfo: WalletInfo;
+      switch (network) {
+        case 'ethereum':
+        case 'bsc':
+        case 'polygon':
+        case 'busd':
+          walletInfo = await this.generateEVMWallet(userId, network, index);
+          break;
+        case 'solana':
+          walletInfo = await this.generateSolanaWallet(userId, network);
+          break;
+        case 'tron':
+          walletInfo = await this.generateTronWallet(userId, network, index);
+          break;
+        default:
+          throw new WalletGenerationError(`Unsupported network: ${network}`, network);
+      }
 
-      const wallets: UserWallets = {
+      // Generate QR code
+      const qrCode = await this.qrCodeService.generateQRCode(walletInfo.address);
+      walletInfo.qrCode = qrCode;
+
+      // Store wallet in database
+      await this.databaseService.storeDisposableWallet(walletInfo);
+
+      return walletInfo;
+    } catch (error) {
+      throw new WalletGenerationError(
+        `Failed to generate ${network} wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        network
+      );
+    }
+  }
+
+  /**
+   * Generate EVM wallet (Ethereum, BSC, Polygon, BUSD)
+   */
+  private async generateEVMWallet(userId: string, network: string, index: number): Promise<WalletInfo> {
+    try {
+      const derivationPath = `${config.blockchain.derivationPath}/${index}`;
+      const wallet = ethers.HDNodeWallet.fromPhrase(config.blockchain.masterSeedPhrase, derivationPath);
+      
+      return {
+        id: `evm_${userId}_${network}_${index}`, // Generate unique ID
         userId,
-        ethereum: { ...ethereumWallet, qrCode: qrCodes.ethereum },
-        bsc: { ...bscWallet, qrCode: qrCodes.bsc },
-        polygon: { ...polygonWallet, qrCode: qrCodes.polygon },
-        solana: { ...solanaWallet, qrCode: qrCodes.solana },
-        tron: { ...tronWallet, qrCode: qrCodes.tron },
-        busd: { ...busdWallet, qrCode: qrCodes.busd }, // Add BUSD wallet
+        network: network as SupportedNetwork,
+        address: wallet.address,
+        privateKey: wallet.privateKey,
+        derivationPath,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-
-      // Store the wallets in memory and database
-      this.userWallets.set(userId, wallets);
-      await this.databaseService.storeUserWallets(wallets);
-
-      return wallets;
     } catch (error) {
       throw new WalletGenerationError(
-        `Failed to generate wallets: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `Failed to generate ${network} wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        network
       );
     }
   }
 
   /**
-   * Generate Ethereum wallet using HD derivation
+   * Generate Solana wallet using deterministic method
    */
-  private async generateEthereumWallet(_userId: string, index: number): Promise<WalletInfo> {
+  private async generateSolanaWallet(userId: string, network: string): Promise<WalletInfo> {
     try {
-      const derivationPath = `${config.blockchain.derivationPath}/${index}`;
-      const wallet = ethers.HDNodeWallet.fromPhrase(config.blockchain.masterSeedPhrase, derivationPath);
-      
-      return {
-        address: wallet.address,
-        privateKey: wallet.privateKey,
-        derivationPath,
-      };
-    } catch (error) {
-      throw new WalletGenerationError(
-        `Failed to generate Ethereum wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'ethereum'
-      );
-    }
-  }
-
-  /**
-   * Generate BSC wallet using HD derivation (same as Ethereum)
-   */
-  private async generateBSCWallet(_userId: string, index: number): Promise<WalletInfo> {
-    try {
-      const derivationPath = `${config.blockchain.derivationPath}/${index}`;
-      const wallet = ethers.HDNodeWallet.fromPhrase(config.blockchain.masterSeedPhrase, derivationPath);
-      
-      return {
-        address: wallet.address,
-        privateKey: wallet.privateKey,
-        derivationPath,
-      };
-    } catch (error) {
-      throw new WalletGenerationError(
-        `Failed to generate BSC wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'bsc'
-      );
-    }
-  }
-
-  /**
-   * Generate Polygon wallet using HD derivation (same as Ethereum)
-   */
-  private async generatePolygonWallet(_userId: string, index: number): Promise<WalletInfo> {
-    try {
-      const derivationPath = `${config.blockchain.derivationPath}/${index}`;
-      const wallet = ethers.HDNodeWallet.fromPhrase(config.blockchain.masterSeedPhrase, derivationPath);
-      
-      return {
-        address: wallet.address,
-        privateKey: wallet.privateKey,
-        derivationPath,
-      };
-    } catch (error) {
-      throw new WalletGenerationError(
-        `Failed to generate Polygon wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'polygon'
-      );
-    }
-  }
-
-  /**
-   * Generate Solana wallet using deterministic method based on SHA256(userId)
-   */
-  private async generateSolanaWallet(userId: string): Promise<WalletInfo> {
-    try {
-      // Generate deterministic seed from userId
-      const hash = crypto.createHash('sha256').update(userId).digest();
+      // Generate deterministic seed from userId and network
+      const seedData = `${userId}-${network}`;
+      const hash = crypto.createHash('sha256').update(seedData).digest();
       const keypair = Keypair.fromSeed(hash.slice(0, 32));
       
       return {
+        id: `solana_${userId}_${network}`, // Generate unique ID
+        userId,
+        network: network as SupportedNetwork,
         address: keypair.publicKey.toString(),
         privateKey: Buffer.from(keypair.secretKey).toString('base64'),
         derivationPath: 'solana-deterministic',
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
     } catch (error) {
       throw new WalletGenerationError(
-        `Failed to generate Solana wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'solana'
+        `Failed to generate ${network} wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        network
       );
     }
   }
@@ -172,7 +138,7 @@ export class WalletService {
   /**
    * Generate Tron wallet using deterministic HD wallet
    */
-  private async generateTronWallet(_userId: string, index: number): Promise<WalletInfo> {
+  private async generateTronWallet(userId: string, network: string, index: number): Promise<WalletInfo> {
     try {
       const seedPhrase = config.blockchain.masterSeedPhrase;
       if (!seedPhrase) {
@@ -187,25 +153,30 @@ export class WalletService {
       const tronAddress = this.convertToTronAddress(wallet.address);
 
       return {
+        id: `tron_${userId}_${network}_${index}`, // Generate unique ID
+        userId,
+        network: network as SupportedNetwork,
         address: tronAddress,
         privateKey: wallet.privateKey,
         derivationPath,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
     } catch (error) {
       throw new WalletGenerationError(
-        `Failed to generate Tron wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'tron'
+        `Failed to generate ${network} wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        network
       );
     }
   }
 
   /**
-   * Generate deterministic index from userId
+   * Generate deterministic index from userId and network
    */
-  private generateIndexFromUserId(userId: string): number {
-    const hash = crypto.createHash('sha256').update(userId).digest();
+  private generateIndexFromUserIdAndNetwork(userId: string, network: string): number {
+    const seedData = `${userId}-${network}`;
+    const hash = crypto.createHash('sha256').update(seedData).digest();
     // Use modulo to ensure the index is within a reasonable range (0 to 999999)
-    // This prevents BIP44 derivation path errors while maintaining deterministic generation
     return hash.readUInt32BE(0) % 1000000;
   }
 
@@ -256,98 +227,83 @@ export class WalletService {
   }
 
   /**
-   * Get existing wallets for a user
+   * Get existing disposable wallet for a user and network
    */
-  public async getUserWallets(userId: string): Promise<UserWallets | null> {
-    // First check memory cache
-    const cachedWallets = this.userWallets.get(userId);
-    if (cachedWallets) {
-      return cachedWallets;
-    }
-
-    // If not in cache, try database
-    const dbWallets = await this.databaseService.getUserWallets(userId);
-    if (dbWallets) {
-      // Cache the result
-      this.userWallets.set(userId, dbWallets);
-      return dbWallets;
-    }
-
-    return null;
-  }
-
-  /**
-   * Get wallet addresses only (for API response)
-   */
-  public async getWalletAddresses(userId: string): Promise<{ ethereum: string; bsc: string; polygon: string; solana: string; tron: string; busd: string } | null> {
+  public async getDisposableWallet(userId: string, network: string): Promise<WalletInfo | null> {
     try {
-      const wallets = await this.getUserWallets(userId);
-      if (!wallets) {
-        return null;
-      }
-
-      return {
-        ethereum: wallets.ethereum.address,
-        bsc: wallets.bsc.address,
-        polygon: wallets.polygon.address,
-        solana: wallets.solana.address,
-        tron: wallets.tron.address,
-        busd: wallets.busd.address, // Add BUSD address
-      };
+      return await this.databaseService.getDisposableWallet(userId, network);
     } catch (error) {
-      console.error('Error getting wallet addresses:', error);
+      console.error('Error getting disposable wallet:', error);
       return null;
     }
   }
 
   /**
-   * Get wallet information for a specific network
+   * Get wallet address for a specific user and network
+   */
+  public async getWalletAddress(userId: string, network: string): Promise<string | null> {
+    try {
+      const wallet = await this.getDisposableWallet(userId, network);
+      return wallet ? wallet.address : null;
+    } catch (error) {
+      console.error('Error getting wallet address:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get wallet information for a specific user and network
    */
   public async getNetworkWallet(userId: string, network: string): Promise<{ address: string; qrCode?: string } | null> {
-    const wallets = await this.getUserWallets(userId);
-    if (!wallets) return null;
+    try {
+      const wallet = await this.getDisposableWallet(userId, network);
+      if (!wallet) return null;
 
-    // Validate network
-    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron'];
-    if (!supportedNetworks.includes(network)) {
-      throw new WalletGenerationError(`Unsupported network: ${network}. Supported networks: ${supportedNetworks.join(', ')}`);
+      const result: { address: string; qrCode?: string } = {
+        address: wallet.address,
+      };
+      
+      if (wallet.qrCode) {
+        result.qrCode = wallet.qrCode;
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting network wallet:', error);
+      return null;
     }
+  }
 
-    const walletInfo = wallets[network as keyof typeof wallets];
-    if (!walletInfo || typeof walletInfo === 'string' || walletInfo instanceof Date) {
-      throw new WalletGenerationError(`No wallet found for network: ${network}`);
+  /**
+   * Mark a wallet as used (for disposable wallet tracking)
+   */
+  public async markWalletAsUsed(userId: string, network: string): Promise<void> {
+    try {
+      await this.databaseService.markWalletAsUsed(userId, network);
+    } catch (error) {
+      console.error('Error marking wallet as used:', error);
     }
-
-    const result: { address: string; qrCode?: string } = {
-      address: walletInfo.address,
-    };
-    
-    if (walletInfo.qrCode) {
-      result.qrCode = walletInfo.qrCode;
-    }
-    
-    return result;
   }
 
   /**
    * Validate wallet generation request
    */
-  public validateWalletRequest(userId: string): void {
+  public validateWalletRequest(userId: string, network: string): void {
     if (!userId || typeof userId !== 'string') {
       throw new WalletGenerationError('Invalid userId provided');
+    }
+
+    if (!network || typeof network !== 'string') {
+      throw new WalletGenerationError('Invalid network provided');
     }
 
     if (userId.trim().length === 0) {
       throw new WalletGenerationError('UserId cannot be empty');
     }
 
-    // Note: Existing wallet check is now handled in the controller
-  }
-
-  /**
-   * Clear all stored wallets (for testing purposes)
-   */
-  public clearWallets(): void {
-    this.userWallets.clear();
+    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'];
+    if (!supportedNetworks.includes(network)) {
+      throw new WalletGenerationError(`Unsupported network: ${network}. Supported networks: ${supportedNetworks.join(', ')}`);
+    }
   }
 } 

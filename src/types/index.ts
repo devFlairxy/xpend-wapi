@@ -1,14 +1,12 @@
 export interface WalletGenerationRequest {
   userId: string;
+  network: SupportedNetwork;
 }
 
 export interface WalletGenerationResponse {
-  ethereum: string;
-  bsc: string;
-  polygon: string;
-  solana: string;
-  tron: string;
-  busd: string; // Add BUSD address
+  network: SupportedNetwork;
+  address: string;
+  qrCode?: string;
 }
 
 // Add new types for network-specific requests
@@ -26,20 +24,13 @@ export interface NetworkWalletResponse {
 }
 
 export interface WalletInfo {
+  id: string;
+  userId: string;
+  network: SupportedNetwork;
   address: string;
   privateKey: string;
   derivationPath: string;
   qrCode?: string; // Base64 encoded QR code
-}
-
-export interface UserWallets {
-  userId: string;
-  ethereum: WalletInfo;
-  bsc: WalletInfo;
-  polygon: WalletInfo;
-  solana: WalletInfo;
-  tron: WalletInfo;
-  busd: WalletInfo; // Add BUSD wallet support
   createdAt: Date;
   updatedAt: Date;
 }

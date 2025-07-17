@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { UserWallets, DepositInfo } from '../types';
+import { WalletInfo, DepositInfo } from '../types';
 
 export class DatabaseService {
   private static instance: DatabaseService;
@@ -17,100 +17,79 @@ export class DatabaseService {
   }
 
   /**
-   * Store user wallets in database
+   * Store disposable wallet in database
    */
-  public async storeUserWallets(userWallets: UserWallets): Promise<void> {
+  public async storeDisposableWallet(walletInfo: WalletInfo): Promise<void> {
     try {
-      await this.prisma.userWallet.create({
+      await this.prisma.disposableWallet.create({
         data: {
-          userId: userWallets.userId,
-          ethereumAddress: userWallets.ethereum.address,
-          ethereumPrivateKey: userWallets.ethereum.privateKey,
-          ethereumDerivationPath: userWallets.ethereum.derivationPath,
-          ethereumQrCode: userWallets.ethereum.qrCode || null,
-          
-          bscAddress: userWallets.bsc.address,
-          bscPrivateKey: userWallets.bsc.privateKey,
-          bscDerivationPath: userWallets.bsc.derivationPath,
-          bscQrCode: userWallets.bsc.qrCode || null,
-          
-          polygonAddress: userWallets.polygon.address,
-          polygonPrivateKey: userWallets.polygon.privateKey,
-          polygonDerivationPath: userWallets.polygon.derivationPath,
-          polygonQrCode: userWallets.polygon.qrCode || null,
-          
-          solanaAddress: userWallets.solana.address,
-          solanaPrivateKey: userWallets.solana.privateKey,
-          solanaDerivationPath: userWallets.solana.derivationPath,
-          solanaQrCode: userWallets.solana.qrCode || null,
-          
-          tronAddress: userWallets.tron.address,
-          tronPrivateKey: userWallets.tron.privateKey,
-          tronDerivationPath: userWallets.tron.derivationPath,
-          tronQrCode: userWallets.tron.qrCode || null,
+          userId: walletInfo.userId,
+          network: walletInfo.network,
+          address: walletInfo.address,
+          privateKey: walletInfo.privateKey,
+          derivationPath: walletInfo.derivationPath,
+          qrCode: walletInfo.qrCode || null,
+          isUsed: false,
         },
       });
     } catch (error) {
-      throw new Error(`Failed to store user wallets: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to store disposable wallet: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * Get user wallets from database
+   * Get disposable wallet from database
    */
-  public async getUserWallets(userId: string): Promise<UserWallets | null> {
+  public async getDisposableWallet(userId: string, network: string): Promise<WalletInfo | null> {
     try {
-      const userWallet = await this.prisma.userWallet.findUnique({
-        where: { userId },
+      const wallet = await this.prisma.disposableWallet.findUnique({
+        where: {
+          userId_network: {
+            userId,
+            network
+          }
+        },
       });
 
-      if (!userWallet) {
+      if (!wallet) {
         return null;
       }
 
       return {
-        userId: userWallet.userId,
-        ethereum: {
-          address: userWallet.ethereumAddress,
-          privateKey: userWallet.ethereumPrivateKey,
-          derivationPath: userWallet.ethereumDerivationPath,
-          qrCode: userWallet.ethereumQrCode || '',
-        },
-        bsc: {
-          address: userWallet.bscAddress,
-          privateKey: userWallet.bscPrivateKey,
-          derivationPath: userWallet.bscDerivationPath,
-          qrCode: userWallet.bscQrCode || '',
-        },
-        polygon: {
-          address: userWallet.polygonAddress,
-          privateKey: userWallet.polygonPrivateKey,
-          derivationPath: userWallet.polygonDerivationPath,
-          qrCode: userWallet.polygonQrCode || '',
-        },
-        solana: {
-          address: userWallet.solanaAddress,
-          privateKey: userWallet.solanaPrivateKey,
-          derivationPath: userWallet.solanaDerivationPath,
-          qrCode: userWallet.solanaQrCode || '',
-        },
-        tron: {
-          address: userWallet.tronAddress,
-          privateKey: userWallet.tronPrivateKey,
-          derivationPath: userWallet.tronDerivationPath,
-          qrCode: userWallet.tronQrCode || '',
-        },
-        busd: {
-          address: userWallet.bscAddress, // BUSD uses same address as BSC
-          privateKey: userWallet.bscPrivateKey, // BUSD uses same private key as BSC
-          derivationPath: userWallet.bscDerivationPath, // BUSD uses same derivation path as BSC
-          qrCode: userWallet.bscQrCode || '', // BUSD uses same QR code as BSC
-        },
-        createdAt: userWallet.createdAt,
-        updatedAt: userWallet.updatedAt,
+        id: wallet.id,
+        userId: wallet.userId,
+        network: wallet.network as any,
+        address: wallet.address,
+        privateKey: wallet.privateKey,
+        derivationPath: wallet.derivationPath,
+        qrCode: wallet.qrCode || '',
+        createdAt: wallet.createdAt,
+        updatedAt: wallet.updatedAt,
       };
     } catch (error) {
-      throw new Error(`Failed to get user wallets: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to get disposable wallet: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Mark wallet as used
+   */
+  public async markWalletAsUsed(userId: string, network: string): Promise<void> {
+    try {
+      await this.prisma.disposableWallet.update({
+        where: {
+          userId_network: {
+            userId,
+            network
+          }
+        },
+        data: {
+          isUsed: true,
+          updatedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      throw new Error(`Failed to mark wallet as used: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -119,23 +98,23 @@ export class DatabaseService {
    */
   public async storeDeposit(depositData: {
     userId: string;
-    userWalletId: string;
+    walletId: string;
     amount: string;
     currency: string;
     network: string;
     txId: string;
-    wallet: string;
+    walletAddress: string;
   }): Promise<DepositInfo> {
     try {
       const deposit = await this.prisma.deposit.create({
         data: {
           userId: depositData.userId,
-          userWalletId: depositData.userWalletId,
+          walletId: depositData.walletId,
           amount: depositData.amount,
           currency: depositData.currency,
           network: depositData.network,
           txId: depositData.txId,
-          wallet: depositData.wallet,
+          walletAddress: depositData.walletAddress,
         },
       });
 
@@ -146,7 +125,7 @@ export class DatabaseService {
         currency: deposit.currency,
         network: deposit.network,
         txId: deposit.txId,
-        wallet: deposit.wallet,
+        wallet: deposit.walletAddress,
         confirmations: deposit.confirmations,
         status: deposit.status,
         webhookSent: deposit.webhookSent,
@@ -263,7 +242,7 @@ export class DatabaseService {
         currency: deposit.currency,
         network: deposit.network,
         txId: deposit.txId,
-        wallet: deposit.wallet,
+        wallet: deposit.walletAddress,
         confirmations: deposit.confirmations,
         status: deposit.status,
         webhookSent: deposit.webhookSent,
@@ -276,33 +255,21 @@ export class DatabaseService {
   }
 
   /**
-   * Get all user wallets for deposit monitoring
+   * Get all disposable wallets for deposit monitoring
    */
-  public async getAllUserWallets(): Promise<{ userId: string; wallets: { [key: string]: string } }[]> {
+  public async getAllDisposableWallets(): Promise<{ userId: string; network: string; address: string }[]> {
     try {
-      const userWallets = await this.prisma.userWallet.findMany({
+      const wallets = await this.prisma.disposableWallet.findMany({
         select: {
           userId: true,
-          ethereumAddress: true,
-          bscAddress: true,
-          polygonAddress: true,
-          solanaAddress: true,
-          tronAddress: true,
+          network: true,
+          address: true,
         },
       });
 
-      return userWallets.map(wallet => ({
-        userId: wallet.userId,
-        wallets: {
-          ethereum: wallet.ethereumAddress,
-          bsc: wallet.bscAddress,
-          polygon: wallet.polygonAddress,
-          solana: wallet.solanaAddress,
-          tron: wallet.tronAddress,
-        },
-      }));
+      return wallets;
     } catch (error) {
-      throw new Error(`Failed to get all user wallets: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to get all disposable wallets: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

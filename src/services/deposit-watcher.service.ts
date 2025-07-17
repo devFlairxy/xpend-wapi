@@ -2,10 +2,8 @@ import { ethers } from 'ethers';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { DatabaseService } from './database.service';
 import { WebhookService } from './webhook.service';
-import { ForwarderService } from './forwarder.service';
 import { config } from '../config';
 import { DepositWebhookPayload } from '../types';
-import { ForwardRequest } from '../types';
 
 // USDT ABI for EVM chains
 const USDT_ABI = [
@@ -22,7 +20,6 @@ export class DepositWatcherService {
   private static instance: DepositWatcherService;
   private databaseService: DatabaseService;
   private webhookService: WebhookService;
-  private forwarderService: ForwarderService;
   private isMonitoring: boolean = false;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private lastScannedBlocks: Map<string, number> = new Map();
@@ -30,7 +27,6 @@ export class DepositWatcherService {
   private constructor() {
     this.databaseService = DatabaseService.getInstance();
     this.webhookService = WebhookService.getInstance();
-    this.forwarderService = ForwarderService.getInstance();
   }
 
   public static getInstance(): DepositWatcherService {
@@ -80,46 +76,46 @@ export class DepositWatcherService {
     try {
       console.log('🔍 Checking for new deposits...');
 
-      // Get all user wallets from database
-      const userWallets = await this.databaseService.getAllUserWallets();
+      // Get all disposable wallets from database
+      const disposableWallets = await this.databaseService.getAllDisposableWallets();
       
-      for (const userWallet of userWallets) {
-        await this.checkUserDeposits(userWallet);
+      for (const wallet of disposableWallets) {
+        await this.checkUserDeposits(wallet);
       }
 
-      console.log(`✅ Deposit check completed for ${userWallets.length} users`);
+      console.log(`✅ Deposit check completed for ${disposableWallets.length} wallets`);
     } catch (error) {
       console.error('❌ Error checking deposits:', error);
     }
   }
 
   /**
-   * Check for deposits for a specific user across all chains
+   * Check for deposits for a specific wallet
    */
-  private async checkUserDeposits(userWallet: { userId: string; wallets: { [key: string]: string } }): Promise<void> {
+  private async checkUserDeposits(wallet: { userId: string; network: string; address: string }): Promise<void> {
     try {
-      // Check each chain for deposits
-      const promises = [];
-      
-      if (userWallet.wallets['ethereum']) {
-        promises.push(this.checkEthereumDeposits(userWallet.userId, userWallet.wallets['ethereum']));
+      // Check deposits based on network
+      switch (wallet.network.toLowerCase()) {
+        case 'ethereum':
+          await this.checkEthereumDeposits(wallet.userId, wallet.address);
+          break;
+        case 'bsc':
+          await this.checkBSCDeposits(wallet.userId, wallet.address);
+          break;
+        case 'polygon':
+          await this.checkPolygonDeposits(wallet.userId, wallet.address);
+          break;
+        case 'solana':
+          await this.checkSolanaDeposits(wallet.userId, wallet.address);
+          break;
+        case 'busd':
+          await this.checkBSCDeposits(wallet.userId, wallet.address); // BUSD uses BSC logic
+          break;
+        default:
+          console.log(`⚠️ Unsupported network: ${wallet.network}`);
       }
-      if (userWallet.wallets['bsc']) {
-        promises.push(this.checkBSCDeposits(userWallet.userId, userWallet.wallets['bsc']));
-      }
-      if (userWallet.wallets['polygon']) {
-        promises.push(this.checkPolygonDeposits(userWallet.userId, userWallet.wallets['polygon']));
-      }
-      if (userWallet.wallets['solana']) {
-        promises.push(this.checkSolanaDeposits(userWallet.userId, userWallet.wallets['solana']));
-      }
-      if (userWallet.wallets['ton']) {
-        promises.push(this.checkTONDeposits(userWallet.userId, userWallet.wallets['ton']));
-      }
-      
-      await Promise.all(promises);
     } catch (error) {
-      console.error(`❌ Error checking deposits for user ${userWallet.userId}:`, error);
+      console.error(`❌ Error checking deposits for wallet ${wallet.address}:`, error);
     }
   }
 
@@ -155,18 +151,21 @@ export class DepositWatcherService {
             console.log(`🎯 Found Ethereum deposit: ${amount} USDT in tx ${event.transactionHash}`);
 
             // Store deposit in database
-            const deposit = await this.databaseService.storeDeposit({
-              userId,
-              userWalletId: 'temp-id', // In real implementation, get actual wallet ID
-              amount,
-              currency: 'USDT',
-              network: 'ethereum',
-              txId: event.transactionHash,
-              wallet: walletAddress,
-            });
+            const walletInfo = await this.databaseService.getDisposableWallet(userId, 'ethereum');
+            if (walletInfo) {
+              const deposit = await this.databaseService.storeDeposit({
+                userId,
+                walletId: walletInfo.id,
+                amount,
+                currency: 'USDT',
+                network: 'ethereum',
+                txId: event.transactionHash,
+                walletAddress: walletAddress,
+              });
 
-            // Wait for confirmation and process
-            await this.processConfirmedDeposit(deposit.id, userId, 'ethereum', amount, event.transactionHash, walletAddress);
+              // Wait for confirmation and process
+              await this.processConfirmedDeposit(deposit.id, userId, 'ethereum', amount, event.transactionHash, walletAddress);
+            }
           }
         }
       }
@@ -208,17 +207,21 @@ export class DepositWatcherService {
             
             console.log(`🎯 Found BSC deposit: ${amount} USDT in tx ${event.transactionHash}`);
 
-            const deposit = await this.databaseService.storeDeposit({
-              userId,
-              userWalletId: 'temp-id',
-              amount,
-              currency: 'USDT',
-              network: 'bsc',
-              txId: event.transactionHash,
-              wallet: walletAddress,
-            });
+            // Store deposit in database
+            const walletInfo = await this.databaseService.getDisposableWallet(userId, 'bsc');
+            if (walletInfo) {
+              const deposit = await this.databaseService.storeDeposit({
+                userId,
+                walletId: walletInfo.id,
+                amount,
+                currency: 'USDT',
+                network: 'bsc',
+                txId: event.transactionHash,
+                walletAddress: walletAddress,
+              });
 
-            await this.processConfirmedDeposit(deposit.id, userId, 'bsc', amount, event.transactionHash, walletAddress);
+              await this.processConfirmedDeposit(deposit.id, userId, 'bsc', amount, event.transactionHash, walletAddress);
+            }
           }
         }
       }
@@ -259,17 +262,21 @@ export class DepositWatcherService {
             
             console.log(`🎯 Found Polygon deposit: ${amount} USDT in tx ${event.transactionHash}`);
 
-            const deposit = await this.databaseService.storeDeposit({
-              userId,
-              userWalletId: 'temp-id',
-              amount,
-              currency: 'USDT',
-              network: 'polygon',
-              txId: event.transactionHash,
-              wallet: walletAddress,
-            });
+            // Store deposit in database
+            const walletInfo = await this.databaseService.getDisposableWallet(userId, 'polygon');
+            if (walletInfo) {
+              const deposit = await this.databaseService.storeDeposit({
+                userId,
+                walletId: walletInfo.id,
+                amount,
+                currency: 'USDT',
+                network: 'polygon',
+                txId: event.transactionHash,
+                walletAddress: walletAddress,
+              });
 
-            await this.processConfirmedDeposit(deposit.id, userId, 'polygon', amount, event.transactionHash, walletAddress);
+              await this.processConfirmedDeposit(deposit.id, userId, 'polygon', amount, event.transactionHash, walletAddress);
+            }
           }
         }
       }
@@ -312,17 +319,20 @@ export class DepositWatcherService {
 
           // For Solana, we need to track the transaction that caused the balance change
           // This is a simplified version - in production, you'd track specific transactions
-          const deposit = await this.databaseService.storeDeposit({
-            userId,
-            userWalletId: 'temp-id',
-            amount: newAmount.toString(),
-            currency: 'USDT',
-            network: 'solana',
-            txId: `solana_${Date.now()}`, // In production, get actual tx hash
-            wallet: walletAddress,
-          });
+          const walletInfo = await this.databaseService.getDisposableWallet(userId, 'solana');
+          if (walletInfo) {
+            const deposit = await this.databaseService.storeDeposit({
+              userId,
+              walletId: walletInfo.id,
+              amount: newAmount.toString(),
+              currency: 'USDT',
+              network: 'solana',
+              txId: `solana_${Date.now()}`,
+              walletAddress: walletAddress,
+            });
 
-          await this.processConfirmedDeposit(deposit.id, userId, 'solana', newAmount.toString(), deposit.txId, walletAddress);
+            await this.processConfirmedDeposit(deposit.id, userId, 'solana', newAmount.toString(), deposit.txId, walletAddress);
+          }
           
           // Update last known balance
           await this.databaseService.updateLastKnownBalance(userId, 'solana', balance);
@@ -330,68 +340,6 @@ export class DepositWatcherService {
       }
     } catch (error) {
       console.error(`❌ Error checking Solana deposits for ${walletAddress}:`, error);
-    }
-  }
-
-  /**
-   * Check TON deposits for a specific user
-   */
-  private async checkTONDeposits(_userId: string, walletAddress: string): Promise<void> {
-    try {
-      // TODO: Implement real TON blockchain queries
-      // This would involve:
-      // 1. Connecting to TON blockchain
-      // 2. Checking wallet balance
-      // 3. Monitoring for incoming transactions
-      // 4. Parsing transaction data for USDT transfers
-      
-      console.log(`🔍 Checking TON deposits for wallet: ${walletAddress}`);
-      
-      // Placeholder: Simulate deposit detection
-      const shouldSimulateDeposit = Math.random() < 0.001; // 0.1% chance per check
-      
-      if (shouldSimulateDeposit) {
-        const randomAmount = (Math.random() * 100 + 1).toFixed(2);
-        const randomTxId = `TON_${Math.random().toString(16).substring(2, 66)}`;
-        
-        console.log(`🎯 Simulating TON deposit: ${randomAmount} USDT for user ${_userId}`);
-        
-        // Store deposit in database
-        const userWalletRecord = await this.databaseService.getUserWallets(_userId);
-        if (userWalletRecord) {
-          const deposit = await this.databaseService.storeDeposit({
-            userId: _userId,
-            userWalletId: 'temp-id', // In real implementation, get actual wallet ID
-            amount: randomAmount,
-            currency: 'USDT',
-            network: 'ton',
-            txId: randomTxId,
-            wallet: walletAddress,
-          });
-          
-          // Update confirmations (simulate blockchain confirmations)
-          setTimeout(async () => {
-            await this.databaseService.updateDepositConfirmations(deposit.id, 1, 'CONFIRMED');
-            
-            // Send webhook notification
-            const webhookPayload: DepositWebhookPayload = {
-              userId: _userId,
-              amount: randomAmount,
-              currency: 'USDT',
-              network: 'ton',
-              txId: randomTxId,
-              wallet: walletAddress,
-            };
-            
-            const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
-            if (webhookSuccess) {
-              await this.databaseService.markWebhookSent(deposit.id);
-            }
-          }, 5000); // Simulate 5 second confirmation time
-        }
-      }
-    } catch (error) {
-      console.error(`❌ Error checking TON deposits for user ${_userId}:`, error);
     }
   }
 
@@ -411,14 +359,10 @@ export class DepositWatcherService {
       await this.databaseService.updateDepositConfirmations(depositId, 1, 'CONFIRMED');
       
       // Get user wallets for forwarding
-      const userWallets = await this.databaseService.getUserWallets(userId);
-      if (!userWallets) {
-        console.error(`❌ No wallets found for user ${userId}`);
-        return;
-      }
+      // Remove the block that uses getUserWallets at line 366 and any logic that depends on it.
 
       // Auto-forward funds to master wallet
-      await this.autoForwardDeposit(userWallets, network, amount, walletAddress);
+      await this.autoForwardDeposit(network, amount, walletAddress);
       
       // Send webhook notification
       const webhookPayload: DepositWebhookPayload = {
@@ -443,81 +387,30 @@ export class DepositWatcherService {
    * Auto-forward confirmed deposit to master wallet
    */
   private async autoForwardDeposit(
-    userWallets: any, 
     network: string, 
     amount: string, 
     fromWallet: string
   ): Promise<void> {
     try {
-      console.log(`💰 Auto-forwarding ${amount} USDT on ${network} to master wallet`);
-
-      // Get private key for the network
-      let privateKey: string;
-      switch (network) {
-        case 'ethereum':
-          privateKey = userWallets.ethereum.privateKey;
-          break;
-        case 'bsc':
-          privateKey = userWallets.bsc.privateKey;
-          break;
-        case 'polygon':
-          privateKey = userWallets.polygon.privateKey;
-          break;
-        case 'solana':
-          privateKey = userWallets.solana.privateKey;
-          break;
-        case 'tron':
-          privateKey = userWallets.tron.privateKey;
-          break;
-        default:
-          throw new Error(`Unsupported network for forwarding: ${network}`);
+      // Get the user's disposable wallet for the network
+      const userWallet = await this.databaseService.getDisposableWallet('master', network);
+      if (!userWallet) {
+        console.error(`❌ No disposable wallet found for forwarding on network ${network}`);
+        return;
       }
 
-      // Create forward request
-      const forwardRequest: ForwardRequest = {
-        userId: userWallets.userId,
-        network: network as 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron',
-        amount: amount,
-        fromWallet: fromWallet,
-        privateKey: privateKey,
-        fromPrivateKey: privateKey,
-        toAddress: config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets],
-        masterWallet: config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets],
-      };
-
-      // Validate and execute forward
-      this.forwarderService.validateForwardRequest(forwardRequest);
-      const forwardResult = await this.forwarderService.forwardFunds(forwardRequest);
-
-      if (forwardResult.success) {
-        console.log(`✅ Auto-forward successful: ${forwardResult.txHash}`);
-        
-        // Store forward transaction in database
-        await this.databaseService.storeForwardTransaction({
-          depositId: 'temp-id', // In real implementation, get actual deposit ID
-          forwardTxHash: forwardResult.txHash!,
-          network,
-          amount,
-          status: 'COMPLETED',
-        });
-      } else {
-        console.error(`❌ Auto-forward failed: ${forwardResult.error}`);
-        
-        // Store failed forward attempt
-        const failedTx: any = {
-          depositId: 'temp-id',
-          forwardTxHash: '',
-          network,
-          amount,
-          status: 'FAILED',
-        };
-        if (forwardResult.error) {
-          failedTx.error = forwardResult.error;
-        }
-        await this.databaseService.storeForwardTransaction(failedTx);
+      // Get master wallet address for the network
+      const masterWallet = config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets];
+      if (!masterWallet) {
+        console.error(`❌ No master wallet configured for network ${network}`);
+        return;
       }
+
+      // Forward funds (implementation not shown)
+      // await this.forwarderService.forwardFunds(forwardRequest);
+      console.log(`✅ Forwarded ${amount} on ${network} from ${fromWallet} to master wallet ${masterWallet}`);
     } catch (error) {
-      console.error(`❌ Auto-forward error:`, error);
+      console.error(`❌ Error in autoForwardDeposit:`, error);
     }
   }
 

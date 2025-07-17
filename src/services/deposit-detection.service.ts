@@ -61,82 +61,77 @@ export class DepositDetectionService {
     try {
       console.log('🔍 Checking for new deposits...');
 
-      // Get all user wallets from database
-      const userWallets = await this.databaseService.getAllUserWallets();
+      // Get all disposable wallets from database
+      const disposableWallets = await this.databaseService.getAllDisposableWallets();
       
-      for (const userWallet of userWallets) {
-        await this.checkUserDeposits(userWallet);
+      for (const wallet of disposableWallets) {
+        await this.checkUserDeposits(wallet);
       }
 
-      console.log(`✅ Deposit check completed for ${userWallets.length} users`);
+      console.log(`✅ Deposit check completed for ${disposableWallets.length} wallets`);
     } catch (error) {
       console.error('❌ Error checking deposits:', error);
     }
   }
 
   /**
-   * Check for deposits for a specific user
+   * Check for deposits for a specific wallet
    */
-  private async checkUserDeposits(userWallet: { userId: string; wallets: { [key: string]: string } }): Promise<void> {
+  private async checkUserDeposits(wallet: { userId: string; network: string; address: string }): Promise<void> {
     try {
       // For now, we'll simulate deposit detection
       // In production, this would query blockchain APIs
-      await this.simulateDepositDetection(userWallet);
+      await this.simulateDepositDetection(wallet);
     } catch (error) {
-      console.error(`❌ Error checking deposits for user ${userWallet.userId}:`, error);
+      console.error(`❌ Error checking deposits for wallet ${wallet.address}:`, error);
     }
   }
 
   /**
    * Simulate deposit detection (replace with real blockchain queries)
    */
-  private async simulateDepositDetection(userWallet: { userId: string; wallets: { [key: string]: string } }): Promise<void> {
+  private async simulateDepositDetection(wallet: { userId: string; network: string; address: string }): Promise<void> {
     // Simulate random deposits for testing
     const shouldSimulateDeposit = Math.random() < 0.01; // 1% chance per check
     
     if (shouldSimulateDeposit) {
-      const networks = ['ethereum', 'bsc', 'polygon', 'solana', 'ton'];
-      const randomNetwork = networks[Math.floor(Math.random() * networks.length)];
       const randomAmount = (Math.random() * 1000 + 1).toFixed(2);
       const randomTxId = `0x${Math.random().toString(16).substring(2, 66)}`;
 
-      console.log(`🎯 Simulating deposit: ${randomAmount} USDT on ${randomNetwork} for user ${userWallet.userId}`);
+      console.log(`🎯 Simulating deposit: ${randomAmount} USDT on ${wallet.network} for user ${wallet.userId}`);
 
-      // Store deposit in database
-      const userWalletRecord = await this.databaseService.getUserWallets(userWallet.userId);
-      if (userWalletRecord) {
-        const walletAddress = userWallet.wallets[randomNetwork as keyof typeof userWallet.wallets];
-        if (walletAddress) {
-          const deposit = await this.databaseService.storeDeposit({
-            userId: userWallet.userId,
-            userWalletId: 'temp-id', // In real implementation, get actual wallet ID
+      // Get the wallet info to get the wallet ID
+      const walletInfo = await this.databaseService.getDisposableWallet(wallet.userId, wallet.network);
+      if (walletInfo) {
+        const deposit = await this.databaseService.storeDeposit({
+          userId: wallet.userId,
+          walletId: walletInfo.id,
+          amount: randomAmount,
+          currency: 'USDT',
+          network: wallet.network,
+          txId: randomTxId,
+          walletAddress: wallet.address,
+        });
+
+        // Update confirmations (simulate blockchain confirmations)
+        setTimeout(async () => {
+          await this.databaseService.updateDepositConfirmations(deposit.id, 1, 'CONFIRMED');
+          
+          // Send webhook notification
+          const webhookPayload: DepositWebhookPayload = {
+            userId: wallet.userId,
             amount: randomAmount,
             currency: 'USDT',
-            network: randomNetwork || 'ethereum',
+            network: wallet.network,
             txId: randomTxId,
-            wallet: walletAddress,
-          });
+            wallet: wallet.address,
+          };
 
-          // Update confirmations (simulate blockchain confirmations)
-          setTimeout(async () => {
-            await this.databaseService.updateDepositConfirmations(deposit.id, 1, 'CONFIRMED');
-            
-            // Send webhook notification
-            const webhookPayload: DepositWebhookPayload = {
-              userId: userWallet.userId,
-              amount: randomAmount,
-              currency: 'USDT',
-              network: randomNetwork || 'ethereum',
-              txId: randomTxId,
-              wallet: walletAddress,
-            };
-
-            const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
-            if (webhookSuccess) {
-              await this.databaseService.markWebhookSent(deposit.id);
-            }
-          }, 5000); // Simulate 5 second confirmation time
-        }
+          const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
+          if (webhookSuccess) {
+            await this.databaseService.markWebhookSent(deposit.id);
+          }
+        }, 5000); // Simulate 5 second confirmation time
       }
     }
   }

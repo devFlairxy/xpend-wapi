@@ -8,45 +8,31 @@ CREATE TYPE "ForwardStatus" AS ENUM ('PENDING', 'COMPLETED', 'FAILED');
 CREATE TYPE "WatchStatus" AS ENUM ('ACTIVE', 'CONFIRMED', 'EXPIRED', 'INACTIVE');
 
 -- CreateTable
-CREATE TABLE "user_wallets" (
+CREATE TABLE "disposable_wallets" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "ethereumAddress" TEXT NOT NULL,
-    "ethereumPrivateKey" TEXT NOT NULL,
-    "ethereumDerivationPath" TEXT NOT NULL,
-    "ethereumQrCode" TEXT,
-    "bscAddress" TEXT NOT NULL,
-    "bscPrivateKey" TEXT NOT NULL,
-    "bscDerivationPath" TEXT NOT NULL,
-    "bscQrCode" TEXT,
-    "polygonAddress" TEXT NOT NULL,
-    "polygonPrivateKey" TEXT NOT NULL,
-    "polygonDerivationPath" TEXT NOT NULL,
-    "polygonQrCode" TEXT,
-    "solanaAddress" TEXT NOT NULL,
-    "solanaPrivateKey" TEXT NOT NULL,
-    "solanaDerivationPath" TEXT NOT NULL,
-    "solanaQrCode" TEXT,
-    "tronAddress" TEXT NOT NULL,
-    "tronPrivateKey" TEXT NOT NULL,
-    "tronDerivationPath" TEXT NOT NULL,
-    "tronQrCode" TEXT,
+    "network" TEXT NOT NULL,
+    "address" TEXT NOT NULL,
+    "privateKey" TEXT NOT NULL,
+    "derivationPath" TEXT NOT NULL,
+    "qrCode" TEXT,
+    "isUsed" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "user_wallets_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "disposable_wallets_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "deposits" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "userWalletId" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
     "amount" TEXT NOT NULL,
     "currency" TEXT NOT NULL DEFAULT 'USDT',
     "network" TEXT NOT NULL,
     "txId" TEXT NOT NULL,
-    "wallet" TEXT NOT NULL,
+    "walletAddress" TEXT NOT NULL,
     "confirmations" INTEGER NOT NULL DEFAULT 0,
     "status" "DepositStatus" NOT NULL DEFAULT 'PENDING',
     "webhookSent" BOOLEAN NOT NULL DEFAULT false,
@@ -90,8 +76,10 @@ CREATE TABLE "webhook_logs" (
 CREATE TABLE "deposit_watches" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
     "address" TEXT NOT NULL,
     "network" TEXT NOT NULL,
+    "token" TEXT NOT NULL DEFAULT 'USDT',
     "expectedAmount" TEXT NOT NULL,
     "actualAmount" TEXT,
     "confirmations" INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +88,7 @@ CREATE TABLE "deposit_watches" (
     "webhookSent" BOOLEAN NOT NULL DEFAULT false,
     "webhookUrl" TEXT,
     "txHash" TEXT,
+    "paymentId" TEXT,
     "lastCheckedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -108,16 +97,34 @@ CREATE TABLE "deposit_watches" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "user_wallets_userId_key" ON "user_wallets"("userId");
+CREATE INDEX "disposable_wallets_userId_idx" ON "disposable_wallets"("userId");
+
+-- CreateIndex
+CREATE INDEX "disposable_wallets_network_idx" ON "disposable_wallets"("network");
+
+-- CreateIndex
+CREATE INDEX "disposable_wallets_address_idx" ON "disposable_wallets"("address");
+
+-- CreateIndex
+CREATE INDEX "disposable_wallets_isUsed_idx" ON "disposable_wallets"("isUsed");
+
+-- CreateIndex
+CREATE INDEX "disposable_wallets_createdAt_idx" ON "disposable_wallets"("createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "disposable_wallets_userId_network_key" ON "disposable_wallets"("userId", "network");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "deposits_txId_key" ON "deposits"("txId");
 
 -- AddForeignKey
-ALTER TABLE "deposits" ADD CONSTRAINT "deposits_userWalletId_fkey" FOREIGN KEY ("userWalletId") REFERENCES "user_wallets"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "deposits" ADD CONSTRAINT "deposits_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "disposable_wallets"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "forward_transactions" ADD CONSTRAINT "forward_transactions_depositId_fkey" FOREIGN KEY ("depositId") REFERENCES "deposits"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "webhook_logs" ADD CONSTRAINT "webhook_logs_depositId_fkey" FOREIGN KEY ("depositId") REFERENCES "deposits"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "deposit_watches" ADD CONSTRAINT "deposit_watches_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "disposable_wallets"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
