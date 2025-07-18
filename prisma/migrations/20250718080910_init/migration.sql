@@ -103,16 +103,13 @@ CREATE INDEX "disposable_wallets_userId_idx" ON "disposable_wallets"("userId");
 CREATE INDEX "disposable_wallets_network_idx" ON "disposable_wallets"("network");
 
 -- CreateIndex
-CREATE INDEX "disposable_wallets_address_idx" ON "disposable_wallets"("address");
-
--- CreateIndex
 CREATE INDEX "disposable_wallets_isUsed_idx" ON "disposable_wallets"("isUsed");
 
 -- CreateIndex
 CREATE INDEX "disposable_wallets_createdAt_idx" ON "disposable_wallets"("createdAt");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "disposable_wallets_userId_network_key" ON "disposable_wallets"("userId", "network");
+CREATE UNIQUE INDEX "disposable_wallets_address_key" ON "disposable_wallets"("address");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "deposits_txId_key" ON "deposits"("txId");

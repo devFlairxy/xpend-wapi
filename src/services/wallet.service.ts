@@ -39,41 +39,54 @@ export class WalletService {
 
       // Check if wallet already exists for this user and network
       const existingWallet = await this.databaseService.getDisposableWallet(userId, network);
-      
       // If wallet exists and is not used, return it
       if (existingWallet && !existingWallet.isUsed) {
         return existingWallet;
       }
 
-      // If wallet exists and is used, or doesn't exist, generate a new one
+      // Generate a new wallet (deterministic for first, random for subsequent)
+      let walletInfo: WalletInfo | null = null;
+      let tries = 0;
+      const maxTries = 10;
       let index: number;
-      if (existingWallet && existingWallet.isUsed) {
-        // Generate a new index for used wallets by incrementing the base index
-        const baseIndex = this.generateIndexFromUserIdAndNetwork(userId, network);
-        const usedWalletCount = await this.getUsedWalletCount(userId, network);
-        index = baseIndex + usedWalletCount + 1;
-      } else {
-        // Generate deterministic index from userId and network for first wallet
-        index = this.generateIndexFromUserIdAndNetwork(userId, network);
-      }
+      do {
+        if (tries === 0) {
+          // First wallet: deterministic index
+          index = this.generateIndexFromUserIdAndNetwork(userId, network);
+        } else {
+          // Subsequent wallets: random index in a high range to avoid collisions
+          index = Math.floor(Math.random() * 1_000_000) + 1_000_000; // 1,000,000 - 1,999,999
+        }
 
-      // Generate wallet based on network
-      let walletInfo: WalletInfo;
-      switch (network) {
-        case 'ethereum':
-        case 'bsc':
-        case 'polygon':
-        case 'busd':
-          walletInfo = await this.generateEVMWallet(userId, network, index);
+        // Generate wallet based on network
+        switch (network) {
+          case 'ethereum':
+          case 'bsc':
+          case 'polygon':
+          case 'busd':
+            walletInfo = await this.generateEVMWallet(userId, network, index);
+            break;
+          case 'solana':
+            walletInfo = await this.generateSolanaWallet(userId, network, index);
+            break;
+          case 'tron':
+            walletInfo = await this.generateTronWallet(userId, network, index);
+            break;
+          default:
+            throw new WalletGenerationError(`Unsupported network: ${network}`, network);
+        }
+
+        // Check for address collision
+        const addressExists = await this.databaseService.walletAddressExists(walletInfo.address);
+        if (!addressExists) {
           break;
-        case 'solana':
-          walletInfo = await this.generateSolanaWallet(userId, network, index);
-          break;
-        case 'tron':
-          walletInfo = await this.generateTronWallet(userId, network, index);
-          break;
-        default:
-          throw new WalletGenerationError(`Unsupported network: ${network}`, network);
+        }
+        walletInfo = null;
+        tries++;
+      } while (tries < maxTries);
+
+      if (!walletInfo) {
+        throw new WalletGenerationError('Failed to generate a unique wallet address after multiple attempts', network);
       }
 
       // Generate QR code
@@ -178,19 +191,6 @@ export class WalletService {
         `Failed to generate ${network} wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
         network
       );
-    }
-  }
-
-  /**
-   * Get count of used wallets for a user and network
-   */
-  private async getUsedWalletCount(userId: string, network: string): Promise<number> {
-    try {
-      const usedWallets = await this.databaseService.getUsedWalletsCount(userId, network);
-      return usedWallets;
-    } catch (error) {
-      console.error('Error getting used wallet count:', error);
-      return 0;
     }
   }
 

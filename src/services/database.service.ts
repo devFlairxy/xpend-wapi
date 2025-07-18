@@ -42,12 +42,14 @@ export class DatabaseService {
    */
   public async getDisposableWallet(userId: string, network: string): Promise<WalletInfo | null> {
     try {
-      const wallet = await this.prisma.disposableWallet.findUnique({
+      const wallet = await this.prisma.disposableWallet.findFirst({
         where: {
-          userId_network: {
-            userId,
-            network
-          }
+          userId,
+          network,
+          isUsed: false,
+        },
+        orderBy: {
+          createdAt: 'desc',
         },
       });
 
@@ -77,18 +79,29 @@ export class DatabaseService {
    */
   public async markWalletAsUsed(userId: string, network: string): Promise<void> {
     try {
-      await this.prisma.disposableWallet.update({
+      // Find the most recent unused wallet for this user and network
+      const wallet = await this.prisma.disposableWallet.findFirst({
         where: {
-          userId_network: {
-            userId,
-            network
-          }
+          userId,
+          network,
+          isUsed: false,
         },
-        data: {
-          isUsed: true,
-          updatedAt: new Date(),
+        orderBy: {
+          createdAt: 'desc',
         },
       });
+
+      if (wallet) {
+        await this.prisma.disposableWallet.update({
+          where: {
+            id: wallet.id,
+          },
+          data: {
+            isUsed: true,
+            updatedAt: new Date(),
+          },
+        });
+      }
     } catch (error) {
       throw new Error(`Failed to mark wallet as used: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -290,6 +303,16 @@ export class DatabaseService {
     } catch (error) {
       throw new Error(`Failed to get all disposable wallets: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Check if a wallet address already exists
+   */
+  public async walletAddressExists(address: string): Promise<boolean> {
+    const count = await this.prisma.disposableWallet.count({
+      where: { address },
+    });
+    return count > 0;
   }
 
   /**

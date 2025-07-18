@@ -27,10 +27,9 @@ model DisposableWallet {
   depositWatches DepositWatch[]
 
   // Indexes for performance
-  @@unique([userId, network]) // One wallet per user per network
+  @@unique([address]) // Ensure unique addresses across all wallets
   @@index([userId])
   @@index([network])
-  @@index([address])
   @@index([isUsed])
   @@index([createdAt])
 
