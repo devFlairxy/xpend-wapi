@@ -4,11 +4,9 @@ import { EventEmitter } from 'events';
 import { 
   DepositWatchRequest, 
   DepositWatchResponse, 
-  DepositMonitorWebhookPayload,
-  ForwardRequest 
+  DepositMonitorWebhookPayload
 } from '../types';
 import { WalletService } from './wallet.service';
-import { ForwarderService } from './forwarder.service';
 import { BatchTransferService } from './batch-transfer.service';
 import { ethers } from 'ethers';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -29,7 +27,6 @@ export class DepositWatchService extends EventEmitter {
   private static instance: DepositWatchService;
   private prisma: PrismaClient;
   private walletService: WalletService;
-  private forwarderService: ForwarderService;
   private batchTransferService: BatchTransferService;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private readonly MONITORING_INTERVAL_MS = 30000; // 30 seconds
@@ -41,7 +38,6 @@ export class DepositWatchService extends EventEmitter {
     super();
     this.prisma = new PrismaClient();
     this.walletService = WalletService.getInstance();
-    this.forwarderService = ForwarderService.getInstance();
     this.batchTransferService = BatchTransferService.getInstance();
     this.startMonitoring();
   }
@@ -1287,118 +1283,6 @@ export class DepositWatchService extends EventEmitter {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`❌ Error force-stopping watch ${watch.id}:`, errorMessage);
-    }
-  }
-
-  /**
-   * Auto-forward confirmed deposit to master wallet using dedicated gas fee wallet
-   */
-  private async autoForwardDeposit(
-    userId: string,
-    network: string,
-    amount: string,
-    userWalletAddress: string,
-    depositTxHash: string
-  ): Promise<{ success: boolean; txHash?: string; error?: string }> {
-    try {
-      console.log(`💰 Auto-forwarding ${amount} USDT on ${network} from ${userWalletAddress} to master wallet`);
-
-      // Get the disposable wallet for the specific network
-      const walletInfo = await this.walletService.getDisposableWallet(userId, network);
-      if (!walletInfo) {
-        throw new Error(`No wallet found for user ${userId} on network ${network}`);
-      }
-
-      const privateKey = walletInfo.privateKey;
-
-      // Get master wallet address for the network
-      const masterWallet = config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets];
-      if (!masterWallet) {
-        throw new Error(`Master wallet not configured for network: ${network}`);
-      }
-
-      // Create forward request (now uses dedicated gas fee wallet for gas fees)
-      const forwardRequest: ForwardRequest = {
-        userId: userId,
-        network: network,
-        amount: amount,
-        fromWallet: userWalletAddress,
-        privateKey: privateKey,
-        fromPrivateKey: privateKey,
-        toAddress: masterWallet,
-        masterWallet: masterWallet,
-      };
-
-      // Validate and execute forward
-      this.forwarderService.validateForwardRequest(forwardRequest);
-      const forwardResult = await this.forwarderService.forwardFunds(forwardRequest);
-
-      if (forwardResult.success) {
-        console.log(`✅ Auto-forward successful: ${forwardResult.txHash}`);
-        console.log(`💸 Gas fees handled by dedicated gas fee wallet`);
-        
-        // Store forward transaction in database (optional)
-        try {
-          await this.prisma.forwardTransaction.create({
-            data: {
-              depositId: depositTxHash, // Using depositTxHash as reference
-              forwardTxHash: forwardResult.txHash!,
-              network: network,
-              amount: amount,
-              status: 'COMPLETED',
-            },
-          });
-          console.log(`📝 Forward transaction recorded in database`);
-        } catch (dbError) {
-          console.warn(`⚠️ Failed to record forward transaction in database:`, dbError);
-          // Don't fail the forwarding if database storage fails
-        }
-
-        const result: { success: boolean; txHash?: string; error?: string } = {
-          success: true,
-        };
-        if (forwardResult.txHash) {
-          result.txHash = forwardResult.txHash;
-        }
-        return result;
-      } else {
-        console.error(`❌ Auto-forward failed: ${forwardResult.error}`);
-        
-        // Store failed forward attempt (optional)
-        try {
-          const failedTxData: any = {
-            depositId: depositTxHash,
-            forwardTxHash: '',
-            network: network,
-            amount: amount,
-            status: 'FAILED',
-          };
-          if (forwardResult.error) {
-            failedTxData.error = forwardResult.error;
-          }
-          await this.prisma.forwardTransaction.create({
-            data: failedTxData,
-          });
-        } catch (dbError) {
-          console.warn(`⚠️ Failed to record failed forward transaction:`, dbError);
-        }
-
-        const result: { success: boolean; txHash?: string; error?: string } = {
-          success: false,
-        };
-        if (forwardResult.error) {
-          result.error = forwardResult.error;
-        }
-        return result;
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`❌ Auto-forward error:`, errorMessage);
-      
-      return {
-        success: false,
-        error: errorMessage,
-      };
     }
   }
 
