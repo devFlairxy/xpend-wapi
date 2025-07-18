@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { WalletService } from './wallet.service';
 import { ForwarderService } from './forwarder.service';
+import { BatchTransferService } from './batch-transfer.service';
 import { ethers } from 'ethers';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { config } from '../config';
@@ -29,6 +30,7 @@ export class DepositWatchService extends EventEmitter {
   private prisma: PrismaClient;
   private walletService: WalletService;
   private forwarderService: ForwarderService;
+  private batchTransferService: BatchTransferService;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private readonly MONITORING_INTERVAL_MS = 30000; // 30 seconds
   private readonly REQUIRED_CONFIRMATIONS = 5;
@@ -40,6 +42,7 @@ export class DepositWatchService extends EventEmitter {
     this.prisma = new PrismaClient();
     this.walletService = WalletService.getInstance();
     this.forwarderService = ForwarderService.getInstance();
+    this.batchTransferService = BatchTransferService.getInstance();
     this.startMonitoring();
   }
 
@@ -376,32 +379,24 @@ export class DepositWatchService extends EventEmitter {
       console.log(`💰 Amount: ${actualAmount} on ${watch.network}`);
       console.log(`📊 Transaction: ${txHash}`);
 
-      // Step 1: Auto-forward funds to master wallet IMMEDIATELY after confirmation
+      // Step 1: Add to batch transfer queue instead of immediate forwarding
       try {
-        console.log(`🚀 Auto-forwarding ${actualAmount} USDT on ${watch.network} to master wallet...`);
+        console.log(`📦 Adding ${actualAmount} USDT on ${watch.network} to batch transfer queue...`);
         
-        const forwardingResult = await this.autoForwardDeposit(
-          watch.userId,
+        await this.batchTransferService.addToBatchQueue(
+          watch.id,
           watch.network,
-          actualAmount,
-          watch.address,
-          txHash
+          watch.userId,
+          actualAmount
         );
         
-        if (forwardingResult.success) {
-          console.log(`✅ Auto-forward successful: ${forwardingResult.txHash}`);
-          console.log(`💰 User wallet ${watch.address} balance reset to 0`);
-          
-          // Mark wallet as used after successful forwarding
-          await this.walletService.markWalletAsUsed(watch.userId, watch.network);
-        } else {
-          console.error(`❌ Auto-forward failed: ${forwardingResult.error}`);
-          // Continue with webhook even if forwarding failed - user should be notified
-        }
-      } catch (forwardError) {
-        const errorMessage = forwardError instanceof Error ? forwardError.message : 'Unknown forwarding error';
-        console.error(`❌ Auto-forwarding error for watch ${watch.id}:`, errorMessage);
-        // Continue with webhook even if forwarding failed
+        console.log(`✅ Deposit queued for batch transfer - user will be notified via webhook`);
+        console.log(`💰 User wallet ${watch.address} will be processed in batch`);
+        
+      } catch (batchError) {
+        const errorMessage = batchError instanceof Error ? batchError.message : 'Unknown batch error';
+        console.error(`❌ Batch queue error for watch ${watch.id}:`, errorMessage);
+        // Continue with webhook even if batching failed
       }
 
       // Step 2: Send confirmed webhook (after forwarding attempt)
@@ -1296,7 +1291,7 @@ export class DepositWatchService extends EventEmitter {
   }
 
   /**
-   * Auto-forward confirmed deposit to master wallet
+   * Auto-forward confirmed deposit to master wallet using dedicated gas fee wallet
    */
   private async autoForwardDeposit(
     userId: string,
@@ -1322,7 +1317,7 @@ export class DepositWatchService extends EventEmitter {
         throw new Error(`Master wallet not configured for network: ${network}`);
       }
 
-      // Create forward request
+      // Create forward request (now uses dedicated gas fee wallet for gas fees)
       const forwardRequest: ForwardRequest = {
         userId: userId,
         network: network,
@@ -1340,6 +1335,7 @@ export class DepositWatchService extends EventEmitter {
 
       if (forwardResult.success) {
         console.log(`✅ Auto-forward successful: ${forwardResult.txHash}`);
+        console.log(`💸 Gas fees handled by dedicated gas fee wallet`);
         
         // Store forward transaction in database (optional)
         try {

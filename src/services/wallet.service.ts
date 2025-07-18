@@ -5,15 +5,18 @@ import { config } from '../config';
 import crypto from 'crypto';
 import { DatabaseService } from './database.service';
 import { QRCodeService } from './qr-code.service';
+import { SecureStorageService } from './secure-storage.service';
 
 export class WalletService {
   private static instance: WalletService;
   private databaseService: DatabaseService;
   private qrCodeService: QRCodeService;
+  private secureStorage: SecureStorageService;
 
   private constructor() {
     this.databaseService = DatabaseService.getInstance();
     this.qrCodeService = QRCodeService.getInstance();
+    this.secureStorage = SecureStorageService.getInstance();
   }
 
   public static getInstance(): WalletService {
@@ -89,12 +92,18 @@ export class WalletService {
         throw new WalletGenerationError('Failed to generate a unique wallet address after multiple attempts', network);
       }
 
-      // Generate QR code
-      const qrCode = await this.qrCodeService.generateQRCode(walletInfo.address);
-      walletInfo.qrCode = qrCode;
+      // Encrypt private key before storage
+      const encryptedPrivateKey = this.secureStorage.encryptPrivateKey(walletInfo.privateKey, walletInfo.id);
+      
+      // Create storage-safe wallet info (without plain text private key)
+      const storageWalletInfo = {
+        ...walletInfo,
+        privateKey: encryptedPrivateKey, // Store encrypted version
+        qrCode: await this.qrCodeService.generateQRCode(walletInfo.address),
+      };
 
       // Store wallet in database
-      await this.databaseService.storeDisposableWallet(walletInfo);
+      await this.databaseService.storeDisposableWallet(storageWalletInfo);
 
       return walletInfo;
     } catch (error) {
@@ -306,6 +315,22 @@ export class WalletService {
       await this.databaseService.markWalletAsUsed(userId, network);
     } catch (error) {
       console.error('Error marking wallet as used:', error);
+    }
+  }
+
+  /**
+   * Get all wallets for a specific network
+   */
+  public async getWalletsByNetwork(network: string): Promise<Array<{ address: string; privateKey: string }>> {
+    try {
+      const wallets = await this.databaseService.getWalletsByNetwork(network);
+      return wallets.map(wallet => ({
+        address: wallet.address,
+        privateKey: this.secureStorage.decryptPrivateKey(wallet.privateKey, wallet.id)
+      }));
+    } catch (error) {
+      console.error(`Error getting wallets for ${network}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return [];
     }
   }
 

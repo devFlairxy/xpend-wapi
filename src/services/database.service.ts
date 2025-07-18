@@ -1,12 +1,15 @@
 import { PrismaClient } from '@prisma/client';
 import { WalletInfo, DepositInfo } from '../types';
+import { SecureStorageService } from './secure-storage.service';
 
 export class DatabaseService {
   private static instance: DatabaseService;
   private prisma: PrismaClient;
+  private secureStorage: SecureStorageService;
 
   private constructor() {
     this.prisma = new PrismaClient();
+    this.secureStorage = SecureStorageService.getInstance();
   }
 
   public static getInstance(): DatabaseService {
@@ -57,12 +60,22 @@ export class DatabaseService {
         return null;
       }
 
+      // Decrypt private key if it's encrypted
+      let privateKey = wallet.privateKey;
+      try {
+        // Try to decrypt (will fail if not encrypted, which is fine for backward compatibility)
+        privateKey = this.secureStorage.decryptPrivateKey(wallet.privateKey, wallet.id);
+      } catch (error) {
+        // If decryption fails, assume it's already plain text (backward compatibility)
+        privateKey = wallet.privateKey;
+      }
+
       return {
         id: wallet.id,
         userId: wallet.userId,
         network: wallet.network as any,
         address: wallet.address,
-        privateKey: wallet.privateKey,
+        privateKey: privateKey,
         derivationPath: wallet.derivationPath,
         qrCode: wallet.qrCode || '',
         isUsed: wallet.isUsed,
@@ -302,6 +315,25 @@ export class DatabaseService {
       return wallets;
     } catch (error) {
       throw new Error(`Failed to get all disposable wallets: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get all wallets for a specific network
+   */
+  public async getWalletsByNetwork(network: string): Promise<Array<{ id: string; address: string; privateKey: string }>> {
+    try {
+      const wallets = await this.prisma.disposableWallet.findMany({
+        where: { network },
+        select: {
+          id: true,
+          address: true,
+          privateKey: true,
+        },
+      });
+      return wallets;
+    } catch (error) {
+      throw new Error(`Failed to get wallets for network ${network}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

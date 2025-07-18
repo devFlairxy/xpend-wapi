@@ -58,6 +58,9 @@ A secure, production-ready USDT deposit processing backend built with TypeScript
    JWT_SECRET=your-super-secret-jwt-key-here
    API_KEY_SECRET=your-api-key-secret-here
 
+   # Wallet Encryption (REQUIRED for production)
+   WALLET_ENCRYPTION_KEY=your_124_character_encryption_key_here
+
    # Blockchain Configuration
    MASTER_SEED_PHRASE=your-24-word-master-seed-phrase-here
    WALLET_DERIVATION_PATH=m/44'/60'/0'/0
@@ -76,12 +79,20 @@ A secure, production-ready USDT deposit processing backend built with TypeScript
    USDT_SOLANA_MINT=Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
    ```
 
-4. **Build the project:**
+4. **Generate encryption key (recommended):**
+   ```bash
+   # Generate a secure 124-character encryption key
+   npm run generate-key
+   
+   # Or manually: openssl rand -hex 62
+   ```
+
+5. **Build the project:**
    ```bash
    npm run build
    ```
 
-5. **Start the server:**
+6. **Start the server:**
    ```bash
    # Development
    npm run dev

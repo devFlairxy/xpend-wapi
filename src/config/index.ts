@@ -23,6 +23,24 @@ export const config = {
       tron: process.env['MASTER_WALLET_TRON'] || '',
       busd: process.env['MASTER_WALLET_BUSD'] || '', // Add BUSD master wallet
     },
+    // Dedicated gas fee wallets - separate from deposit receiving wallets
+    gasFeeWallets: {
+      ethereum: process.env['GAS_FEE_WALLET_ETH'] || '',
+      bsc: process.env['GAS_FEE_WALLET_BSC'] || '',
+      polygon: process.env['GAS_FEE_WALLET_POLYGON'] || '',
+      solana: process.env['GAS_FEE_WALLET_SOLANA'] || '',
+      tron: process.env['GAS_FEE_WALLET_TRON'] || '',
+      busd: process.env['GAS_FEE_WALLET_BUSD'] || '', // BUSD uses BSC gas fee wallet
+    },
+    // Gas fee wallet private keys (encrypted in production)
+    gasFeeWalletKeys: {
+      ethereum: process.env['GAS_FEE_WALLET_KEY_ETH'] || '',
+      bsc: process.env['GAS_FEE_WALLET_KEY_BSC'] || '',
+      polygon: process.env['GAS_FEE_WALLET_KEY_POLYGON'] || '',
+      solana: process.env['GAS_FEE_WALLET_KEY_SOLANA'] || '',
+      tron: process.env['GAS_FEE_WALLET_KEY_TRON'] || '',
+      busd: process.env['GAS_FEE_WALLET_KEY_BUSD'] || '', // BUSD uses BSC gas fee wallet key
+    },
   },
   chains: {
     ethereum: {

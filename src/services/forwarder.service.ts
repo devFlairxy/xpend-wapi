@@ -4,6 +4,9 @@ import { getOrCreateAssociatedTokenAccount, transfer, getMint } from '@solana/sp
 import { config } from '../config';
 import { ForwardRequest, ForwardResult } from '../types';
 import TronWeb from 'tronweb';
+import { GasFeeService } from './gas-fee.service';
+import { GasFeeWalletService } from './gas-fee-wallet.service';
+import { SlackService } from './slack.service';
 
 // USDT ABI for EVM chains
 const USDT_ABI = [
@@ -19,8 +22,15 @@ export class ForwarderService {
   private static instance: ForwarderService;
   private maxRetries: number = 3;
   private baseDelay: number = 1000; // 1 second
+  private gasFeeService: GasFeeService;
+  private gasFeeWalletService: GasFeeWalletService;
+  private slackService: SlackService;
 
-  private constructor() {}
+  private constructor() {
+    this.gasFeeService = GasFeeService.getInstance();
+    this.gasFeeWalletService = GasFeeWalletService.getInstance();
+    this.slackService = SlackService.getInstance();
+  }
 
   public static getInstance(): ForwarderService {
     if (!ForwarderService.instance) {
@@ -110,9 +120,14 @@ export class ForwarderService {
         throw new Error(`Unsupported network: ${network}`);
       }
       
-      // Create provider and wallet
+      // Get dedicated gas fee wallet for this network
+      const gasFeeWallet = await this.gasFeeWalletService.getGasFeeWallet(network);
+      console.log(`💰 Using gas fee wallet: ${gasFeeWallet.address} (balance: ${gasFeeWallet.balance})`);
+      
+      // Create provider and wallets
       const provider = new ethers.JsonRpcProvider(networkConfig.rpcUrl);
-      const wallet = new ethers.Wallet(privateKey, provider);
+      const depositWallet = new ethers.Wallet(privateKey, provider);
+      const gasFeeWalletInstance = new ethers.Wallet(gasFeeWallet.privateKey, provider);
       
       // Create contract instance (USDT for most networks, BUSD for BUSD network)
       const contractAddress = network === 'busd' 
@@ -122,28 +137,85 @@ export class ForwarderService {
       const contract = new ethers.Contract(
         contractAddress,
         USDT_ABI,
-        wallet
+        depositWallet // Use deposit wallet for USDT transfer
       );
       
       // Convert amount to token decimals (6 for most USDT, 18 for BSC USDT and BUSD)
       const decimals = network === 'bsc' || network === 'busd' ? 18 : 6;
       const tokenAmount = ethers.parseUnits(amount, decimals);
       
-      // Estimate gas with null check
+      // Get enhanced gas estimate with safety buffers
+      const gasEstimate = await this.gasFeeService.getTransactionGasEstimate(
+        network,
+        amount,
+        depositWallet.address,
+        masterWallet
+      );
+      
+      console.log(`📊 Gas estimate for ${network}: ${this.gasFeeService.formatGasEstimate(gasEstimate)}`);
+      
+      // Validate gas fee wallet has sufficient balance for gas fees
+      const balanceValidation = await this.gasFeeService.validateGasBalance(
+        network,
+        gasFeeWallet.address,
+        amount,
+        true // Include buffer
+      );
+      
+      if (!balanceValidation.hasSufficientBalance) {
+        // Send critical Slack notification before throwing error
+        await this.sendGasFeeWalletLowBalanceAlert(
+          network,
+          gasFeeWallet.address,
+          balanceValidation.currentBalance,
+          balanceValidation.requiredBalance,
+          balanceValidation.deficit,
+          request.amount,
+          request.userId || 'unknown'
+        );
+
+        throw new Error(
+          `Insufficient balance in gas fee wallet. Required: ${ethers.formatEther(balanceValidation.requiredBalance)} ETH, ` +
+          `Available: ${ethers.formatEther(balanceValidation.currentBalance)} ETH, ` +
+          `Deficit: ${ethers.formatEther(balanceValidation.deficit)} ETH`
+        );
+      }
+      
+      // Check if deposit wallet has sufficient native tokens for gas fees
+      const depositWalletBalance = await provider.getBalance(depositWallet.address);
+      const requiredGasFee = gasEstimate.safeEstimatedFee;
+      
+      if (depositWalletBalance < requiredGasFee) {
+        // Transfer gas fees from gas fee wallet to deposit wallet
+        console.log(`🔄 Transferring gas fees from gas fee wallet to deposit wallet...`);
+        const gasFeeTransfer = await gasFeeWalletInstance.sendTransaction({
+          to: depositWallet.address,
+          value: requiredGasFee,
+          gasLimit: 21000, // Standard ETH transfer gas limit
+        });
+        
+        const gasFeeReceipt = await gasFeeTransfer.wait();
+        if (gasFeeReceipt) {
+          console.log(`✅ Gas fee transfer successful: ${gasFeeReceipt.hash}`);
+        }
+        
+        // Wait a moment for the balance to be available
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      // Get transfer function and build transaction with safe gas limit
       const transferFunction = contract['transfer'];
       if (!transferFunction) {
         throw new Error('Token transfer function not found');
       }
       
-      const gasEstimate = await transferFunction.estimateGas(masterWallet, tokenAmount);
-      
-      // Build transaction
       const tx = await transferFunction.populateTransaction(masterWallet, tokenAmount, {
-        gasLimit: gasEstimate,
+        gasLimit: gasEstimate.safeGasLimit,
+        gasPrice: gasEstimate.gasPrice,
       });
       
-      // Send transaction
-      const response = await wallet.sendTransaction(tx);
+      // Send transaction using deposit wallet (now funded with gas fees)
+      const response = await depositWallet.sendTransaction(tx);
       const receipt = await response.wait();
       
       if (!receipt) {
@@ -152,6 +224,7 @@ export class ForwarderService {
       
       const tokenName = network === 'busd' ? 'BUSD' : 'USDT';
       console.log(`✅ ${network.toUpperCase()} ${tokenName} transfer successful: ${receipt.hash}`);
+      console.log(`💸 Gas fees provided by: ${gasFeeWallet.address}`);
       
       return {
         success: true,
@@ -308,25 +381,12 @@ export class ForwarderService {
     estimatedFee: bigint;
   }> {
     try {
-      const provider = new ethers.JsonRpcProvider(config.chains[network as keyof typeof config.chains].rpcUrl);
-      const usdtContract = new ethers.Contract(config.chains[network as keyof typeof config.chains].usdtContract, USDT_ABI, provider);
-      const gasPrice = await provider.getFeeData();
-      
-      // Parse USDT amount (6 decimals)
-      const usdtAmount = ethers.parseUnits(amount, 6);
-      
-      // Estimate gas for USDT transfer
-      const transferFunction = usdtContract['transfer'];
-      if (!transferFunction) {
-        throw new Error('USDT transfer function not found');
-      }
-      const gasLimit = await transferFunction.estimateGas(config.blockchain.masterWallets[network as keyof typeof config.blockchain.masterWallets], usdtAmount);
-      const estimatedFee = gasLimit * (gasPrice.gasPrice || BigInt(0));
+      const gasEstimate = await this.gasFeeService.getGasEstimate(network, amount);
       
       return {
-        gasLimit,
-        gasPrice: gasPrice.gasPrice || BigInt(0),
-        estimatedFee,
+        gasLimit: gasEstimate.gasLimit,
+        gasPrice: gasEstimate.gasPrice,
+        estimatedFee: gasEstimate.estimatedFee,
       };
     } catch (error) {
       throw new Error(`Failed to estimate gas: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -334,9 +394,9 @@ export class ForwarderService {
   }
 
   /**
-   * Validate forward request
+   * Validate forward request with enhanced gas fee validation
    */
-  public validateForwardRequest(request: ForwardRequest): void {
+  public async validateForwardRequest(request: ForwardRequest): Promise<void> {
     if (!request.network || !request.amount || !request.privateKey || !request.masterWallet) {
       throw new Error('Missing required fields in forward request');
     }
@@ -345,7 +405,7 @@ export class ForwarderService {
       throw new Error('Amount must be greater than 0');
     }
 
-    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron'];
+    const supportedNetworks = ['ethereum', 'bsc', 'polygon', 'solana', 'tron', 'busd'];
     if (!supportedNetworks.includes(request.network)) {
       throw new Error(`Unsupported network: ${request.network}`);
     }
@@ -355,5 +415,194 @@ export class ForwarderService {
     if (!masterWallet) {
       throw new Error(`Master wallet not configured for network: ${request.network}`);
     }
+
+    // For EVM chains, validate gas balance
+    if (['ethereum', 'bsc', 'polygon', 'busd'].includes(request.network)) {
+      try {
+        const provider = new ethers.JsonRpcProvider(config.chains[request.network as keyof typeof config.chains].rpcUrl);
+        const wallet = new ethers.Wallet(request.privateKey, provider);
+        
+        const balanceValidation = await this.gasFeeService.validateGasBalance(
+          request.network,
+          wallet.address,
+          request.amount,
+          true // Include buffer
+        );
+        
+        if (!balanceValidation.hasSufficientBalance) {
+          // Send critical Slack notification before throwing error
+          await this.sendGasFeeWalletLowBalanceAlert(
+            request.network,
+            wallet.address,
+            balanceValidation.currentBalance,
+            balanceValidation.requiredBalance,
+            balanceValidation.deficit,
+            request.amount,
+            request.userId || 'unknown'
+          );
+
+          throw new Error(
+            `Insufficient balance for gas fees. Required: ${ethers.formatEther(balanceValidation.requiredBalance)} ETH, ` +
+            `Available: ${ethers.formatEther(balanceValidation.currentBalance)} ETH, ` +
+            `Deficit: ${ethers.formatEther(balanceValidation.deficit)} ETH`
+          );
+        }
+      } catch (error) {
+        // If gas validation fails, log warning but don't fail the request
+        console.warn(`Gas balance validation failed for ${request.network}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  }
+
+  /**
+   * Get comprehensive gas estimate with safety buffers
+   */
+  public async getEnhancedGasEstimate(
+    network: string,
+    amount: string,
+    fromAddress?: string,
+    toAddress?: string
+  ) {
+    return await this.gasFeeService.getGasEstimate(network, amount, fromAddress, toAddress);
+  }
+
+  /**
+   * Validate wallet gas balance
+   */
+  public async validateWalletGasBalance(
+    network: string,
+    walletAddress: string,
+    amount: string
+  ) {
+    return await this.gasFeeService.validateGasBalance(network, walletAddress, amount, true);
+  }
+
+  /**
+   * Get network gas price recommendations
+   */
+  public async getNetworkGasPrice(network: string) {
+    return await this.gasFeeService.getNetworkGasPrice(network);
+  }
+
+  /**
+   * Send critical Slack alert for insufficient gas fee wallet balance
+   */
+  private async sendGasFeeWalletLowBalanceAlert(
+    network: string,
+    walletAddress: string,
+    currentBalance: bigint,
+    requiredBalance: bigint,
+    deficit: bigint,
+    transferAmount: string,
+    userId: string
+  ): Promise<void> {
+    try {
+      const message = {
+        channel: '#gas-fee-alerts',
+        text: `🚨 CRITICAL: Gas Fee Wallet Insufficient Balance - ${network.toUpperCase()}`,
+        blocks: [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: `🚨 CRITICAL: Gas Fee Wallet Insufficient Balance - ${network.toUpperCase()}`,
+              emoji: true
+            }
+          },
+          {
+            type: 'section',
+            fields: [
+              {
+                type: 'mrkdwn',
+                text: `*Network:* ${network.toUpperCase()}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Wallet Address:* \`${walletAddress}\``
+              }
+            ]
+          },
+          {
+            type: 'section',
+            fields: [
+              {
+                type: 'mrkdwn',
+                text: `*Current Balance:* ${ethers.formatEther(currentBalance)} ${getNativeToken(network)}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Required Balance:* ${ethers.formatEther(requiredBalance)} ${getNativeToken(network)}`
+              }
+            ]
+          },
+          {
+            type: 'section',
+            fields: [
+              {
+                type: 'mrkdwn',
+                text: `*Deficit:* ${ethers.formatEther(deficit)} ${getNativeToken(network)}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Transfer Amount:* ${transferAmount} USDT`
+              }
+            ]
+          },
+          {
+            type: 'section',
+            fields: [
+              {
+                type: 'mrkdwn',
+                text: `*User ID:* ${userId}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Time:* ${new Date().toISOString()}`
+              }
+            ]
+          },
+          {
+            type: 'divider'
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: '⚠️ *IMMEDIATE ACTION REQUIRED:*\n• Fund the gas fee wallet immediately\n• Transfer operations are blocked\n• Check wallet balance and add funds'
+            }
+          },
+          {
+            type: 'context',
+            elements: [
+              {
+                type: 'mrkdwn',
+                text: 'This is a critical alert that requires immediate attention to prevent service disruption.'
+              }
+            ]
+          }
+        ]
+      };
+
+      await this.slackService.sendMessage(message);
+      console.log(`📤 Sent critical gas fee wallet balance alert to Slack for ${network}`);
+    } catch (error) {
+      console.error(`❌ Failed to send gas fee wallet balance alert to Slack: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      // Don't throw error - we don't want Slack notification failure to break the main flow
+    }
+  }
+}
+
+/**
+ * Get native token symbol for a network
+ */
+function getNativeToken(network: string): string {
+  switch (network) {
+    case 'ethereum': return 'ETH';
+    case 'bsc': return 'BNB';
+    case 'polygon': return 'MATIC';
+    case 'solana': return 'SOL';
+    case 'tron': return 'TRX';
+    case 'busd': return 'BNB'; // BUSD runs on BSC
+    default: return 'TOKEN';
   }
 } 

@@ -22,6 +22,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:studio": "prisma studio",
+    "generate-key": "ts-node scripts/generate-encryption-key.ts",
     "ci:full": "npm run lint && npm run test:coverage && npm run security:audit"
   },
   "keywords": [
