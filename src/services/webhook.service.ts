@@ -21,7 +21,61 @@ export class WebhookService {
   private generateSignature(payload: string): string {
     const hmac = crypto.createHmac('sha256', config.webhook.sharedSecret);
     hmac.update(payload);
-    return hmac.digest('hex');
+    return `sha256=${hmac.digest('hex')}`;
+  }
+
+  /**
+   * Send webhook to custom URL with custom payload
+   */
+  public async sendWebhook(
+    url: string, 
+    payload: any, 
+    secret?: string
+  ): Promise<{ success: boolean; statusCode?: number; response?: string; error?: string }> {
+    try {
+      const payloadString = JSON.stringify(payload);
+      const signature = secret ? this.generateSignatureWithSecret(payloadString, secret) : this.generateSignature(payloadString);
+
+      const response = await axios.post(url, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Wallet-API-Signature': signature,
+          'User-Agent': 'USDT-Deposit-Backend/1.0.0',
+        },
+        timeout: 10000, // 10 second timeout
+      });
+
+      if (response.status >= 200 && response.status < 300) {
+        console.log(`✅ Webhook sent successfully to ${url}`);
+        return {
+          success: true,
+          statusCode: response.status,
+          response: response.data,
+        };
+      } else {
+        console.error(`❌ Webhook failed with status ${response.status} for ${url}`);
+        return {
+          success: false,
+          statusCode: response.status,
+          error: `HTTP ${response.status}`,
+        };
+      }
+    } catch (error) {
+      console.error(`❌ Webhook error for ${url}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Generate HMAC-SHA256 signature with custom secret
+   */
+  private generateSignatureWithSecret(payload: string, secret: string): string {
+    const hmac = crypto.createHmac('sha256', secret);
+    hmac.update(payload);
+    return `sha256=${hmac.digest('hex')}`;
   }
 
   /**

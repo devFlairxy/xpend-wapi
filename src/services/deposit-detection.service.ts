@@ -120,10 +120,7 @@ export class DepositDetectionService {
         setTimeout(async () => {
           await this.databaseService.updateDepositConfirmations(deposit.id, 1, 'CONFIRMED');
           
-          // Mark wallet as used after successful deposit processing
-          await this.walletService.markWalletAsUsed(wallet.userId, wallet.network);
-          
-          // Send webhook notification
+          // Send webhook notification first
           const webhookPayload: DepositWebhookPayload = {
             userId: wallet.userId,
             amount: randomAmount,
@@ -134,8 +131,14 @@ export class DepositDetectionService {
           };
 
           const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
+          
+          // Only mark wallet as used and webhook as sent if webhook was successful
           if (webhookSuccess) {
             await this.databaseService.markWebhookSent(deposit.id);
+            await this.walletService.markWalletAsUsed(wallet.userId, wallet.network);
+            console.log(`✅ Webhook sent successfully, wallet marked as used for user ${wallet.userId} on ${wallet.network}`);
+          } else {
+            console.log(`❌ Webhook failed, wallet not marked as used for user ${wallet.userId} on ${wallet.network}`);
           }
         }, 5000); // Simulate 5 second confirmation time
       }

@@ -364,10 +364,7 @@ export class DepositWatcherService {
       // Auto-forward funds to master wallet
       await this.autoForwardDeposit(network, amount, walletAddress);
       
-      // Mark wallet as used after successful deposit processing
-      await this.databaseService.markWalletAsUsed(userId, network);
-      
-      // Send webhook notification
+      // Send webhook notification first
       const webhookPayload: DepositWebhookPayload = {
         userId,
         amount,
@@ -378,8 +375,14 @@ export class DepositWatcherService {
       };
 
       const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
+      
+      // Only mark wallet as used and webhook as sent if webhook was successful
       if (webhookSuccess) {
         await this.databaseService.markWebhookSent(depositId);
+        await this.databaseService.markWalletAsUsed(userId, network);
+        console.log(`✅ Webhook sent successfully, wallet marked as used for user ${userId} on ${network}`);
+      } else {
+        console.log(`❌ Webhook failed, wallet not marked as used for user ${userId} on ${network}`);
       }
     } catch (error) {
       console.error(`❌ Error processing confirmed deposit:`, error);
