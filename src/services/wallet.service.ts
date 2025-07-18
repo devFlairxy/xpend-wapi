@@ -39,12 +39,23 @@ export class WalletService {
 
       // Check if wallet already exists for this user and network
       const existingWallet = await this.databaseService.getDisposableWallet(userId, network);
-      if (existingWallet) {
+      
+      // If wallet exists and is not used, return it
+      if (existingWallet && !existingWallet.isUsed) {
         return existingWallet;
       }
 
-      // Generate deterministic index from userId and network
-      const index = this.generateIndexFromUserIdAndNetwork(userId, network);
+      // If wallet exists and is used, or doesn't exist, generate a new one
+      let index: number;
+      if (existingWallet && existingWallet.isUsed) {
+        // Generate a new index for used wallets by incrementing the base index
+        const baseIndex = this.generateIndexFromUserIdAndNetwork(userId, network);
+        const usedWalletCount = await this.getUsedWalletCount(userId, network);
+        index = baseIndex + usedWalletCount + 1;
+      } else {
+        // Generate deterministic index from userId and network for first wallet
+        index = this.generateIndexFromUserIdAndNetwork(userId, network);
+      }
 
       // Generate wallet based on network
       let walletInfo: WalletInfo;
@@ -56,7 +67,7 @@ export class WalletService {
           walletInfo = await this.generateEVMWallet(userId, network, index);
           break;
         case 'solana':
-          walletInfo = await this.generateSolanaWallet(userId, network);
+          walletInfo = await this.generateSolanaWallet(userId, network, index);
           break;
         case 'tron':
           walletInfo = await this.generateTronWallet(userId, network, index);
@@ -110,7 +121,7 @@ export class WalletService {
   /**
    * Generate Solana wallet using deterministic method
    */
-  private async generateSolanaWallet(userId: string, network: string): Promise<WalletInfo> {
+  private async generateSolanaWallet(userId: string, network: string, index: number): Promise<WalletInfo> {
     try {
       // Generate deterministic seed from userId and network
       const seedData = `${userId}-${network}`;
@@ -118,7 +129,7 @@ export class WalletService {
       const keypair = Keypair.fromSeed(hash.slice(0, 32));
       
       return {
-        id: `solana_${userId}_${network}`, // Generate unique ID
+        id: `solana_${userId}_${network}_${index}`, // Generate unique ID
         userId,
         network: network as SupportedNetwork,
         address: keypair.publicKey.toString(),
@@ -167,6 +178,19 @@ export class WalletService {
         `Failed to generate ${network} wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
         network
       );
+    }
+  }
+
+  /**
+   * Get count of used wallets for a user and network
+   */
+  private async getUsedWalletCount(userId: string, network: string): Promise<number> {
+    try {
+      const usedWallets = await this.databaseService.getUsedWalletsCount(userId, network);
+      return usedWallets;
+    } catch (error) {
+      console.error('Error getting used wallet count:', error);
+      return 0;
     }
   }
 

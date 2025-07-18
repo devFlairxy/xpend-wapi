@@ -31,6 +31,7 @@ export interface WalletInfo {
   privateKey: string;
   derivationPath: string;
   qrCode?: string; // Base64 encoded QR code
+  isUsed?: boolean; // Track if wallet has been used for deposits
   createdAt: Date;
   updatedAt: Date;
 }

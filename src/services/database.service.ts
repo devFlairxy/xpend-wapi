@@ -63,6 +63,7 @@ export class DatabaseService {
         privateKey: wallet.privateKey,
         derivationPath: wallet.derivationPath,
         qrCode: wallet.qrCode || '',
+        isUsed: wallet.isUsed,
         createdAt: wallet.createdAt,
         updatedAt: wallet.updatedAt,
       };
@@ -90,6 +91,24 @@ export class DatabaseService {
       });
     } catch (error) {
       throw new Error(`Failed to mark wallet as used: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get count of used wallets for a user and network
+   */
+  public async getUsedWalletsCount(userId: string, network: string): Promise<number> {
+    try {
+      const count = await this.prisma.disposableWallet.count({
+        where: {
+          userId,
+          network,
+          isUsed: true,
+        },
+      });
+      return count;
+    } catch (error) {
+      throw new Error(`Failed to get used wallets count: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

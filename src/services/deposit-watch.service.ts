@@ -391,6 +391,9 @@ export class DepositWatchService extends EventEmitter {
         if (forwardingResult.success) {
           console.log(`✅ Auto-forward successful: ${forwardingResult.txHash}`);
           console.log(`💰 User wallet ${watch.address} balance reset to 0`);
+          
+          // Mark wallet as used after successful forwarding
+          await this.walletService.markWalletAsUsed(watch.userId, watch.network);
         } else {
           console.error(`❌ Auto-forward failed: ${forwardingResult.error}`);
           // Continue with webhook even if forwarding failed - user should be notified
@@ -654,7 +657,7 @@ export class DepositWatchService extends EventEmitter {
    */
   private generateWebhookSignature(payload: DepositMonitorWebhookPayload): string {
     const crypto = require('crypto');
-    const secret = process.env['WEBHOOK_SECRET'] || 'default-secret';
+    const secret = process.env['SHARED_SECRET'] || 'default-shared-secret';
     const payloadString = JSON.stringify(payload);
     
     // Create HMAC-SHA256 signature

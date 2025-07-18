@@ -1,17 +1,20 @@
 import { DatabaseService } from './database.service';
 import { WebhookService } from './webhook.service';
+import { WalletService } from './wallet.service';
 import { DepositWebhookPayload } from '../types';
 
 export class DepositDetectionService {
   private static instance: DepositDetectionService;
   private databaseService: DatabaseService;
   private webhookService: WebhookService;
+  private walletService: WalletService;
   private isMonitoring: boolean = false;
   private monitoringInterval: NodeJS.Timeout | null = null;
 
   private constructor() {
     this.databaseService = DatabaseService.getInstance();
     this.webhookService = WebhookService.getInstance();
+    this.walletService = WalletService.getInstance();
   }
 
   public static getInstance(): DepositDetectionService {
@@ -116,6 +119,9 @@ export class DepositDetectionService {
         // Update confirmations (simulate blockchain confirmations)
         setTimeout(async () => {
           await this.databaseService.updateDepositConfirmations(deposit.id, 1, 'CONFIRMED');
+          
+          // Mark wallet as used after successful deposit processing
+          await this.walletService.markWalletAsUsed(wallet.userId, wallet.network);
           
           // Send webhook notification
           const webhookPayload: DepositWebhookPayload = {

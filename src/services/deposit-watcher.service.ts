@@ -364,6 +364,9 @@ export class DepositWatcherService {
       // Auto-forward funds to master wallet
       await this.autoForwardDeposit(network, amount, walletAddress);
       
+      // Mark wallet as used after successful deposit processing
+      await this.databaseService.markWalletAsUsed(userId, network);
+      
       // Send webhook notification
       const webhookPayload: DepositWebhookPayload = {
         userId,
