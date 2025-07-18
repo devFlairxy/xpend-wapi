@@ -98,7 +98,7 @@ export class DepositWatchService extends EventEmitter {
           walletId: walletInfo.id, // Link to the disposable wallet
           address: address,
           network: request.network,
-          token: request.network === 'busd' ? 'BUSD' : 'USDT', // Set appropriate token
+          token: request.tokenCode || 'USDT', // Use tokenCode from request, default to USDT
           expectedAmount: request.expectedAmount,
           webhookUrl: request.webhookUrl || null,
           paymentId: request.paymentId || null,

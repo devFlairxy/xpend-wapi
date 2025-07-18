@@ -64,6 +64,7 @@ export interface DepositWatchRequest {
   userId: string;
   network: SupportedNetwork;
   expectedAmount: string;
+  tokenCode?: string; // Token type (USDT, BUSD, etc.) to deposit
   webhookUrl?: string;
   paymentId?: string; // Optional payment ID from credo for linking deposit to specific request
 }
