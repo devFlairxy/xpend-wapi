@@ -85,6 +85,7 @@ export interface DepositMonitorWebhookPayload {
   userId: string;
   address: string;
   network: string;
+  token: string; // Token type (USDT, BUSD, etc.)
   expectedAmount: string;
   actualAmount: string;
   confirmations: number;

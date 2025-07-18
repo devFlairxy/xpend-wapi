@@ -121,6 +121,25 @@ export class DatabaseService {
   }
 
   /**
+   * Mark a specific wallet as used by wallet ID
+   */
+  public async markWalletAsUsedById(walletId: string): Promise<void> {
+    try {
+      await this.prisma.disposableWallet.update({
+        where: {
+          id: walletId,
+        },
+        data: {
+          isUsed: true,
+          updatedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      throw new Error(`Failed to mark wallet as used by ID: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
    * Get count of used wallets for a user and network
    */
   public async getUsedWalletsCount(userId: string, network: string): Promise<number> {

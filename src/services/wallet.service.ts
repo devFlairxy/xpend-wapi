@@ -40,26 +40,20 @@ export class WalletService {
         );
       }
 
-      // Check if wallet already exists for this user and network
-      const existingWallet = await this.databaseService.getDisposableWallet(userId, network);
-      // If wallet exists and is not used, return it
-      if (existingWallet && !existingWallet.isUsed) {
-        return existingWallet;
-      }
+      // Always generate a new wallet for each deposit request (no reuse)
+      // This ensures better security and tracking for each deposit session
 
-      // Generate a new wallet (deterministic for first, random for subsequent)
+      // Generate a new wallet with unique index for each request
       let walletInfo: WalletInfo | null = null;
       let tries = 0;
       const maxTries = 10;
       let index: number;
       do {
-        if (tries === 0) {
-          // First wallet: deterministic index
-          index = this.generateIndexFromUserIdAndNetwork(userId, network);
-        } else {
-          // Subsequent wallets: random index in a high range to avoid collisions
-          index = Math.floor(Math.random() * 1_000_000) + 1_000_000; // 1,000,000 - 1,999,999
-        }
+        // Generate unique index based on userId, network, and current timestamp
+        index = this.generateUniqueIndex(userId, network, tries);
+        
+        // Add some randomness for additional security
+        index += Math.floor(Math.random() * 1000);
 
         // Generate wallet based on network
         switch (network) {
@@ -204,13 +198,14 @@ export class WalletService {
   }
 
   /**
-   * Generate deterministic index from userId and network
+   * Generate unique index for each wallet request using timestamp and attempt number
    */
-  private generateIndexFromUserIdAndNetwork(userId: string, network: string): number {
-    const seedData = `${userId}-${network}`;
+  private generateUniqueIndex(userId: string, network: string, attempt: number): number {
+    const timestamp = Date.now();
+    const seedData = `${userId}-${network}-${timestamp}-${attempt}`;
     const hash = crypto.createHash('sha256').update(seedData).digest();
-    // Use modulo to ensure the index is within a reasonable range (0 to 999999)
-    return hash.readUInt32BE(0) % 1000000;
+    // Use higher range to reduce collision probability
+    return hash.readUInt32BE(0) % 10000000; // 0 to 9,999,999
   }
 
   /**
@@ -315,6 +310,17 @@ export class WalletService {
       await this.databaseService.markWalletAsUsed(userId, network);
     } catch (error) {
       console.error('Error marking wallet as used:', error);
+    }
+  }
+
+  /**
+   * Mark a specific wallet as used by wallet ID
+   */
+  public async markWalletAsUsedById(walletId: string): Promise<void> {
+    try {
+      await this.databaseService.markWalletAsUsedById(walletId);
+    } catch (error) {
+      console.error('Error marking wallet as used by ID:', error);
     }
   }
 

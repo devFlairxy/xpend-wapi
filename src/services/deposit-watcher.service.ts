@@ -157,7 +157,7 @@ export class DepositWatcherService {
                 userId,
                 walletId: walletInfo.id,
                 amount,
-                currency: 'USDT',
+                currency: 'USDT', // Ethereum only supports USDT
                 network: 'ethereum',
                 txId: event.transactionHash,
                 walletAddress: walletAddress,

@@ -319,6 +319,15 @@ export class DepositWatchService extends EventEmitter {
           });
           console.log(`📝 Watch ${watch.id} status updated to EXPIRED - monitoring stopped`);
           console.log(`🏁 MONITORING COMPLETE for watch ${watch.id} - Address will no longer be monitored`);
+          
+          // Mark the wallet as used since the watch expired
+          try {
+            await this.walletService.markWalletAsUsedById(watch.walletId);
+            console.log(`🔒 Wallet marked as used for wallet ${watch.walletId} due to expiry`);
+          } catch (walletError) {
+            const walletErrorMessage = walletError instanceof Error ? walletError.message : 'Unknown wallet error';
+            console.error(`❌ Failed to mark wallet as used for expired watch ${watch.id}:`, walletErrorMessage);
+          }
         } catch (dbError) {
           const errorMessage = dbError instanceof Error ? dbError.message : 'Unknown database error';
           console.error(`❌ Failed to update watch ${watch.id} to EXPIRED status:`, errorMessage);
@@ -427,6 +436,15 @@ export class DepositWatchService extends EventEmitter {
           });
           console.log(`📝 Watch ${watch.id} status updated to CONFIRMED - monitoring stopped`);
           console.log(`🏁 MONITORING COMPLETE for watch ${watch.id} - Address will no longer be monitored`);
+          
+          // Mark the wallet as used since the deposit was confirmed
+          try {
+            await this.walletService.markWalletAsUsedById(watch.walletId);
+            console.log(`🔒 Wallet marked as used for wallet ${watch.walletId} due to confirmed deposit`);
+          } catch (walletError) {
+            const walletErrorMessage = walletError instanceof Error ? walletError.message : 'Unknown wallet error';
+            console.error(`❌ Failed to mark wallet as used for confirmed watch ${watch.id}:`, walletErrorMessage);
+          }
         } catch (dbError) {
           const errorMessage = dbError instanceof Error ? dbError.message : 'Unknown database error';
           console.error(`❌ Failed to update watch ${watch.id} to CONFIRMED status:`, errorMessage);
@@ -501,6 +519,7 @@ export class DepositWatchService extends EventEmitter {
       userId: watch.userId,
       address: watch.address,
       network: watch.network,
+      token: watch.token || 'USDT', // Use the token from the watch record
       expectedAmount: watch.expectedAmount,
       actualAmount: actualAmount || '0',
       confirmations: status === 'CONFIRMED' ? this.REQUIRED_CONFIRMATIONS : 0,
