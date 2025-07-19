@@ -123,6 +123,7 @@ export class WalletService {
         address: wallet.address,
         privateKey: wallet.privateKey,
         derivationPath,
+        status: 'UNUSED',
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -151,6 +152,7 @@ export class WalletService {
         address: keypair.publicKey.toString(),
         privateKey: Buffer.from(keypair.secretKey).toString('base64'),
         derivationPath: 'solana-deterministic',
+        status: 'UNUSED',
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -186,6 +188,7 @@ export class WalletService {
         address: tronAddress,
         privateKey: wallet.privateKey,
         derivationPath,
+        status: 'UNUSED',
         createdAt: new Date(),
         updatedAt: new Date(),
       };

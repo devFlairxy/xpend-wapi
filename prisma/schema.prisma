@@ -10,6 +10,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum WalletStatus {
+  UNUSED    // Never used for deposits
+  PENDING   // Deposit detected but not fully processed
+  USED      // Successfully processed deposit
+  FAILED    // Failed deposit processing
+}
+
 model DisposableWallet {
   id            String   @id @default(cuid())
   userId        String
@@ -18,7 +25,7 @@ model DisposableWallet {
   privateKey    String
   derivationPath String
   qrCode        String?
-  isUsed        Boolean  @default(false) // Track if wallet has been used for deposit
+  status        WalletStatus @default(UNUSED)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -30,7 +37,7 @@ model DisposableWallet {
   @@unique([address]) // Ensure unique addresses across all wallets
   @@index([userId])
   @@index([network])
-  @@index([isUsed])
+  @@index([status])
   @@index([createdAt])
 
   @@map("disposable_wallets")

@@ -355,16 +355,30 @@ export class DepositWatcherService {
     walletAddress: string
   ): Promise<void> {
     try {
+      // Get wallet info
+      const walletInfo = await this.databaseService.getWalletByAddress(walletAddress);
+      if (!walletInfo) {
+        console.error(`❌ Wallet not found for address ${walletAddress}`);
+        return;
+      }
+
+      // Mark wallet as pending as soon as deposit is detected
+      await this.databaseService.markWalletAsPending(walletInfo.id);
+      console.log(`🔄 Wallet ${walletInfo.id} marked as PENDING due to detected deposit`);
+
       // Update deposit status to confirmed
       await this.databaseService.updateDepositConfirmations(depositId, 1, 'CONFIRMED');
       
-      // Get user wallets for forwarding
-      // Remove the block that uses getUserWallets at line 366 and any logic that depends on it.
-
       // Auto-forward funds to master wallet
-      await this.autoForwardDeposit(network, amount, walletAddress);
+      try {
+        await this.autoForwardDeposit(network, amount, walletAddress);
+        console.log(`✅ Successfully forwarded funds for deposit ${depositId}`);
+      } catch (forwardError) {
+        console.error(`❌ Failed to forward funds:`, forwardError);
+        // Don't return here - still try to send webhook
+      }
       
-      // Send webhook notification first
+      // Send webhook notification
       const webhookPayload: DepositWebhookPayload = {
         userId,
         amount,
@@ -374,18 +388,32 @@ export class DepositWatcherService {
         wallet: walletAddress,
       };
 
-      const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
-      
-      // Only mark wallet as used and webhook as sent if webhook was successful
-      if (webhookSuccess) {
-        await this.databaseService.markWebhookSent(depositId);
-        await this.databaseService.markWalletAsUsed(userId, network);
-        console.log(`✅ Webhook sent successfully, wallet marked as used for user ${userId} on ${network}`);
-      } else {
-        console.log(`❌ Webhook failed, wallet not marked as used for user ${userId} on ${network}`);
+      try {
+        const webhookSuccess = await this.webhookService.sendDepositWebhookWithRetry(webhookPayload);
+        
+        if (webhookSuccess) {
+          await this.databaseService.markWebhookSent(depositId);
+          await this.databaseService.markWalletAsUsedById(walletInfo.id);
+          console.log(`✅ Webhook sent successfully, wallet ${walletInfo.id} marked as USED`);
+        } else {
+          // If webhook fails, mark wallet as failed to prevent reuse
+          await this.databaseService.markWalletAsFailed(walletInfo.id);
+          console.log(`❌ Webhook failed, wallet ${walletInfo.id} marked as FAILED`);
+        }
+      } catch (webhookError) {
+        console.error(`❌ Error in webhook processing:`, webhookError);
+        // Mark wallet as failed on webhook error
+        await this.databaseService.markWalletAsFailed(walletInfo.id);
       }
     } catch (error) {
       console.error(`❌ Error processing confirmed deposit:`, error);
+      // If we have wallet info, mark it as failed
+      if (arguments[5]) { // walletAddress is available
+        const wallet = await this.databaseService.getWalletByAddress(arguments[5]).catch(() => null);
+        if (wallet) {
+          await this.databaseService.markWalletAsFailed(wallet.id).catch(() => {});
+        }
+      }
     }
   }
 

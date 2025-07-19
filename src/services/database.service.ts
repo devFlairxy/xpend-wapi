@@ -32,7 +32,7 @@ export class DatabaseService {
           privateKey: walletInfo.privateKey,
           derivationPath: walletInfo.derivationPath,
           qrCode: walletInfo.qrCode || null,
-          isUsed: false,
+          status: 'UNUSED',
         },
       });
     } catch (error) {
@@ -49,7 +49,7 @@ export class DatabaseService {
         where: {
           userId,
           network,
-          isUsed: false,
+          status: 'UNUSED',
         },
         orderBy: {
           createdAt: 'desc',
@@ -63,10 +63,8 @@ export class DatabaseService {
       // Decrypt private key if it's encrypted
       let privateKey = wallet.privateKey;
       try {
-        // Try to decrypt (will fail if not encrypted, which is fine for backward compatibility)
         privateKey = this.secureStorage.decryptPrivateKey(wallet.privateKey, wallet.id);
       } catch (error) {
-        // If decryption fails, assume it's already plain text (backward compatibility)
         privateKey = wallet.privateKey;
       }
 
@@ -78,7 +76,7 @@ export class DatabaseService {
         privateKey: privateKey,
         derivationPath: wallet.derivationPath,
         qrCode: wallet.qrCode || '',
-        isUsed: wallet.isUsed,
+        status: wallet.status,
         createdAt: wallet.createdAt,
         updatedAt: wallet.updatedAt,
       };
@@ -88,16 +86,32 @@ export class DatabaseService {
   }
 
   /**
-   * Mark wallet as used
+   * Mark wallet as pending when deposit is detected
+   */
+  public async markWalletAsPending(walletId: string): Promise<void> {
+    try {
+      await this.prisma.disposableWallet.update({
+        where: { id: walletId },
+        data: {
+          status: 'PENDING',
+          updatedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      throw new Error(`Failed to mark wallet as pending: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Mark wallet as used after successful processing
    */
   public async markWalletAsUsed(userId: string, network: string): Promise<void> {
     try {
-      // Find the most recent unused wallet for this user and network
       const wallet = await this.prisma.disposableWallet.findFirst({
         where: {
           userId,
           network,
-          isUsed: false,
+          status: 'PENDING',
         },
         orderBy: {
           createdAt: 'desc',
@@ -106,11 +120,9 @@ export class DatabaseService {
 
       if (wallet) {
         await this.prisma.disposableWallet.update({
-          where: {
-            id: wallet.id,
-          },
+          where: { id: wallet.id },
           data: {
-            isUsed: true,
+            status: 'USED',
             updatedAt: new Date(),
           },
         });
@@ -121,21 +133,36 @@ export class DatabaseService {
   }
 
   /**
-   * Mark a specific wallet as used by wallet ID
+   * Mark wallet as used by ID
    */
   public async markWalletAsUsedById(walletId: string): Promise<void> {
     try {
       await this.prisma.disposableWallet.update({
-        where: {
-          id: walletId,
-        },
+        where: { id: walletId },
         data: {
-          isUsed: true,
+          status: 'USED',
           updatedAt: new Date(),
         },
       });
     } catch (error) {
       throw new Error(`Failed to mark wallet as used by ID: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Mark wallet as failed
+   */
+  public async markWalletAsFailed(walletId: string): Promise<void> {
+    try {
+      await this.prisma.disposableWallet.update({
+        where: { id: walletId },
+        data: {
+          status: 'FAILED',
+          updatedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      throw new Error(`Failed to mark wallet as failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -148,7 +175,7 @@ export class DatabaseService {
         where: {
           userId,
           network,
-          isUsed: true,
+          status: 'USED',
         },
       });
       return count;
@@ -364,6 +391,63 @@ export class DatabaseService {
       where: { address },
     });
     return count > 0;
+  }
+
+  /**
+   * Check if wallet has any existing deposits
+   */
+  public async checkWalletDepositHistory(address: string): Promise<boolean> {
+    try {
+      const depositCount = await this.prisma.deposit.count({
+        where: {
+          walletAddress: address,
+          status: {
+            in: ['CONFIRMED', 'PENDING']
+          }
+        }
+      });
+      return depositCount > 0;
+    } catch (error) {
+      throw new Error(`Failed to check wallet deposit history: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get wallet by address
+   */
+  public async getWalletByAddress(address: string): Promise<WalletInfo | null> {
+    try {
+      const wallet = await this.prisma.disposableWallet.findUnique({
+        where: { address },
+      });
+
+      if (!wallet) {
+        return null;
+      }
+
+      // Decrypt private key if it's encrypted
+      let privateKey = wallet.privateKey;
+      try {
+        privateKey = this.secureStorage.decryptPrivateKey(wallet.privateKey, wallet.id);
+      } catch (error) {
+        privateKey = wallet.privateKey;
+      }
+
+      return {
+        id: wallet.id,
+        userId: wallet.userId,
+        network: wallet.network as any,
+        address: wallet.address,
+        privateKey: privateKey,
+        derivationPath: wallet.derivationPath,
+        qrCode: wallet.qrCode || '',
+        status: wallet.status,
+        createdAt: wallet.createdAt,
+        updatedAt: wallet.updatedAt,
+      };
+    } catch (error) {
+      throw new Error(`Failed to get wallet by address: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   /**

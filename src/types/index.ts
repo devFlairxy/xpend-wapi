@@ -12,6 +12,8 @@ export interface WalletGenerationResponse {
 // Add new types for network-specific requests
 export type SupportedNetwork = 'ethereum' | 'bsc' | 'polygon' | 'solana' | 'tron' | 'busd';
 
+export type WalletStatus = 'UNUSED' | 'PENDING' | 'USED' | 'FAILED';
+
 export interface NetworkWalletRequest {
   userId: string;
   network: SupportedNetwork;
@@ -31,7 +33,7 @@ export interface WalletInfo {
   privateKey: string;
   derivationPath: string;
   qrCode?: string; // Base64 encoded QR code
-  isUsed?: boolean; // Track if wallet has been used for deposits
+  status: WalletStatus; // Track wallet status
   createdAt: Date;
   updatedAt: Date;
 }
